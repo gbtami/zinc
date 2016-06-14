@@ -2,6 +2,7 @@
 import os
 import chess
 import chess.uci
+from multiprocessing import Pool
 
 EngineFiles = ['../Stockfish/test', '../Stockfish/master']
 DrawRule = {'movenumber': 40, 'movecount': 8, 'score': 20}
@@ -28,25 +29,24 @@ def play(game):
     idx = game[2]
     while (not board.is_game_over(True)):
         engines[idx].position(board)
-        bestmove, ponder = engines[idx].go(depth=10)
+        bestmove, ponder = engines[idx].go(depth=8)
         board.push(bestmove)
         idx ^= 1
 
-    # Store game result
-    game[3] = board.result(True)
-
     # Pretty-print result
-    print('Game #%d: %s vs. %s: %s' % (game[0] + 1, engines[whiteIdx].name, engines[whiteIdx ^ 1].name, game[3]))
+    result = board.result(True)
+    print('Game #%d: %s vs. %s: %s' % (game[0] + 1, engines[whiteIdx].name, engines[whiteIdx ^ 1].name, result))
 
     # Close engines
     for i in range(0, 2):
         engines[i].quit()
 
-# Prepare game elements of the form [gameIdx, fen, engineIdx, result], where
+    return result
+
+# Prepare game elements of the form [gameIdx, fen, engineIdx], where
 # gameIdx: game index, in range(0, Games)
 # fen: starting position
 # engineIdx: which engine plays the first move (0 or 1)
-# result: None for now, will be updated as games are played
 games = []
 f = open(Openings, 'r')
 for i in range(0, Games, 2):
@@ -54,10 +54,15 @@ for i in range(0, Games, 2):
     if fen == '':
         f.seek(0)
     else:
-        games.append([i, fen, 0, None])
+        games.append([i, fen, 0])
         if (i + 1 < Games):
-            games.append([i + 1, fen, 1, None])
+            games.append([i + 1, fen, 1])
 
-# Play games, sequentially for the moment
-for g in games:
-    play(g)
+# Play games, concurrently
+pool = Pool(processes=Concurrency)
+results = pool.map(play, games)
+pool.close()
+pool.join()
+
+for r in results:
+    print(r)
