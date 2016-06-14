@@ -20,12 +20,12 @@ def play(game):
         engines[i].ucinewgame()
         engines[i].name = os.path.split(EngineFiles[i])[1]
 
-    # Setup board with given FEN start position game[0]
-    board = chess.Board(game[0])
-    whiteIdx = game[1] ^ (board.turn == chess.BLACK) # which engine is white ?
+    # Setup board with given FEN start position game[1]
+    board = chess.Board(game[1])
+    whiteIdx = game[2] ^ (board.turn == chess.BLACK) # which engine is white ?
 
-    # Play game: game[1] is the idx of the engine playing first
-    idx = game[1]
+    # Play game: game[2] is the idx of the engine playing first
+    idx = game[2]
     while (not board.is_game_over(True)):
         engines[idx].position(board)
         bestmove, ponder = engines[idx].go(depth=10)
@@ -33,19 +33,20 @@ def play(game):
         idx ^= 1
 
     # Store game result
-    game[2] = board.result(True)
+    game[3] = board.result(True)
 
     # Pretty-print result
-    print('%s vs. %s: %s' % (engines[whiteIdx].name, engines[whiteIdx ^ 1].name, game[2]))
+    print('Game #%d: %s vs. %s: %s' % (game[0] + 1, engines[whiteIdx].name, engines[whiteIdx ^ 1].name, game[3]))
 
     # Close engines
     for i in range(0, 2):
         engines[i].quit()
 
-# Prepare game elements of the form [fen, idx, result], where
-# fen is the starting position
-# idx is 0 or 1 says which engine plays the first move
-# result is None for now, and will be updated once games are played
+# Prepare game elements of the form [gameIdx, fen, engineIdx, result], where
+# gameIdx: game index, in range(0, Games)
+# fen: starting position
+# engineIdx: which engine plays the first move (0 or 1)
+# result: None for now, will be updated as games are played
 games = []
 f = open(Openings, 'r')
 for i in range(0, Games, 2):
@@ -53,8 +54,9 @@ for i in range(0, Games, 2):
     if fen == '':
         f.seek(0)
     else:
-        games.append([fen, 0, None])
-        games.append([fen, 1, None])
+        games.append([i, fen, 0, None])
+        if (i + 1 < Games):
+            games.append([i + 1, fen, 1, None])
 
 # Play games, sequentially for the moment
 for g in games:
