@@ -1,13 +1,20 @@
-import sys
+import os
 import chess
 import chess.uci
 
+EngineFiles = ['../Stockfish/test', '../Stockfish/master']
+DrawRule = {'movenumber': 40, 'movecount': 8, 'score': 20}
+ResignRule = {'movecount': 3, 'score': 500}
+Openings = '../book5.epd'
+Concurrency = 7
+
 engines = []
 for i in range(0, 2):
-    engines.append(chess.uci.popen_engine(sys.argv[i + 1]))
+    engines.append(chess.uci.popen_engine(EngineFiles[i]))
     engines[i].uci()
     engines[i].isready()
     engines[i].ucinewgame()
+    engines[i].name = os.path.split(engineFiles[i])[1]
 
 board = chess.Board()
 
