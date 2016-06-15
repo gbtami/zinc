@@ -1,12 +1,16 @@
-#!/usr/bin/python3
+#!/usr/bin/python
 import os
 import chess, chess.uci
 from multiprocessing import Pool
 import math, statistics
 
-EngineFiles = ['../Stockfish/test', '../Stockfish/master']
-DrawRule = {'movenumber': 40, 'movecount': 8, 'score': 20}
-ResignRule = {'movecount': 3, 'score': 500}
+# Parameters
+Engine = [
+    {'file': '../Stockfish/test', 'name' : 'test'},
+    {'file': '../Stockfish/base', 'name' : 'base'}
+]
+Draw = {'movenumber': 40, 'movecount': 8, 'score': 20}
+Resign = {'movecount': 3, 'score': 500}
 Openings = '../book5.epd'
 Games = 50
 Concurrency = 7
@@ -15,22 +19,22 @@ def play(game):
     # Start engines
     engines = []
     for i in range(0, 2):
-        engines.append(chess.uci.popen_engine(EngineFiles[i]))
+        engines.append(chess.uci.popen_engine(Engine[i]['file']))
         engines[i].uci()
-        engines[i].isready()
         engines[i].ucinewgame()
-        engines[i].name = os.path.split(EngineFiles[i])[1]
+        engines[i].name = Engine[i]['name']
 
     # Setup the position, and determine which engine plays first
     board = chess.Board(game['fen'])
-    idx = game['white'] ^ (board.turn == chess.BLACK)
+    i = game['white'] ^ (board.turn == chess.BLACK)
 
     # Play the game
     while (not board.is_game_over(True)):
-        engines[idx].position(board)
-        bestmove, ponder = engines[idx].go(depth=8)
+        engines[i].position(board)
+        engines[i].isready()
+        bestmove, ponder = engines[i].go(depth=8)
         board.push(bestmove)
-        idx ^= 1
+        i ^= 1
 
     # Display results
     result = board.result(True)
