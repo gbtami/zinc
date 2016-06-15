@@ -70,7 +70,7 @@ def play(game):
 
     # Determine result in case of adjudication
     if result == '*':
-        if resignCnt >= Resign['movecount']:
+        if resignCnt >= 2 * Resign['movecount']:
             if score > 0:
                 result = '1-0' if board.turn == chess.WHITE else '0-1'
             else:
