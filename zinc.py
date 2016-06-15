@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/python3
 import os
 import chess, chess.uci
 from multiprocessing import Pool
@@ -23,21 +23,56 @@ def play(game):
         engines[i].uci()
         engines[i].ucinewgame()
         engines[i].name = Engine[i]['name']
+        engines[i].info_handlers.append(chess.uci.InfoHandler())
 
     # Setup the position, and determine which engine plays first
     board = chess.Board(game['fen'])
     i = game['white'] ^ (board.turn == chess.BLACK)
 
     # Play the game
+    drawCnt, resignCnt = 0, 0 # in plies
     while (not board.is_game_over(True)):
         engines[i].position(board)
         engines[i].isready()
         bestmove, ponder = engines[i].go(depth=8)
+
+        score = engines[i].info_handlers[0].info['score'][1].cp
+        if score != None:
+            # Resign adjudication
+            if abs(score) >= Resign['score']:
+                resignCnt += 1
+                if resignCnt >= 2 * Resign['movecount']:
+                    break
+            else:
+                resignCnt=0
+
+            # Draw adjudication
+            if abs(score) <= Draw['score']:
+                drawCnt += 1
+                if drawCnt >= 2 * Draw['movecount'] and board.fullmove_number >= Draw['movenumber']:
+                    break
+            else:
+                drawCnt = 0
+        else:
+            # Disable adjudication over mate scores
+            drawCnt, resignCnt = 0, 0
+
         board.push(bestmove)
         i ^= 1
 
-    # Display results
     result = board.result(True)
+
+    # Determine result in case of adjudication
+    if result == '*':
+        if resignCnt >= Resign['movecount']:
+            if score > 0:
+                result = '1-0' if board.turn == chess.WHITE else '0-1'
+            else:
+                result = '0-1' if board.turn == chess.WHITE else '1-0'
+        else:
+            result = '1/2-1/2'
+
+    # Display results
     print('Game #%d: %s vs. %s: %s' % (game['idx'] + 1, engines[game['white']].name,
         engines[game['white'] ^ 1].name, result))
 
@@ -61,7 +96,7 @@ for i in range(0, Games, 2):
         f.seek(0)
     else:
         games.append({'idx': i, 'fen': fen, 'white': 0})
-        if (i + 1 < Games):
+        if i + 1 < Games:
             games.append({'idx': i + 1, 'fen': fen, 'white': 1})
 
 # Play games, concurrently
