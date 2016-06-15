@@ -9,6 +9,7 @@ Engine = [
     {'file': '../Stockfish/test', 'name' : 'test'},
     {'file': '../Stockfish/base', 'name' : 'base'}
 ]
+TimeControl = {'depth': None, 'nodes': None, 'movetime': 100}
 Draw = {'movenumber': 40, 'movecount': 8, 'score': 20}
 Resign = {'movecount': 3, 'score': 500}
 Openings = '../book5.epd'
@@ -34,7 +35,12 @@ def play(game):
     while (not board.is_game_over(True)):
         engines[i].position(board)
         engines[i].isready()
-        bestmove, ponder = engines[i].go(depth=8)
+
+        bestmove, ponder = engines[i].go(
+            depth = TimeControl['depth'],
+            nodes = TimeControl['nodes'],
+            movetime = TimeControl['movetime']
+        )
 
         score = engines[i].info_handlers[0].info['score'][1].cp
         if score != None:
