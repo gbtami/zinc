@@ -5,9 +5,13 @@ from multiprocessing import Pool
 import math, statistics
 
 # Parameters
-Engine = [
+Engines = [
     {'file': '../Stockfish/test', 'name' : 'test'},
     {'file': '../Stockfish/base', 'name' : 'base'}
+]
+Options = [
+    {'Hash': 16, 'Contempt': 10},
+    {'Hash': 16, 'Contempt': 10}
 ]
 TimeControl = {'depth': None, 'nodes': None, 'movetime': 100}
 Draw = {'movenumber': 40, 'movecount': 8, 'score': 20}
@@ -20,10 +24,16 @@ def play(game):
     # Start engines
     engines = []
     for i in range(0, 2):
-        engines.append(chess.uci.popen_engine(Engine[i]['file']))
+        engines.append(chess.uci.popen_engine(Engines[i]['file']))
         engines[i].uci()
+        engines[i].name = Engines[i]['name']
+        for name in Options[i]:
+            if name not in engines[i].options:
+                print('warning: "%s" is not a valid UCI Option for engine "%s"'
+                    % (name, engines[i].name))
+        engines[i].setoption(Options[i])
+        engines[i].isready()
         engines[i].ucinewgame()
-        engines[i].name = Engine[i]['name']
         engines[i].info_handlers.append(chess.uci.InfoHandler())
 
     # Setup the position, and determine which engine plays first
@@ -104,6 +114,7 @@ for i in range(0, Games, 2):
         games.append({'idx': i, 'fen': fen, 'white': 0})
         if i + 1 < Games:
             games.append({'idx': i + 1, 'fen': fen, 'white': 1})
+f.close()
 
 # Play games, concurrently
 pool = Pool(processes=Concurrency)
