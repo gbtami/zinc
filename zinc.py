@@ -110,16 +110,15 @@ def play(game):
 # fen: starting position
 # white: which engine plays white (0 or 1)
 games = []
-f = open(Openings, 'r')
-for i in range(0, Games, 2):
-    fen = f.readline().split(';')[0]
-    if fen == '':
-        f.seek(0)
-    else:
-        games.append({'idx': i, 'fen': fen, 'white': 0})
-        if i + 1 < Games:
-            games.append({'idx': i + 1, 'fen': fen, 'white': 1})
-f.close()
+with open(Openings, 'r') as f:
+    for i in range(0, Games, 2):
+        fen = f.readline().split(';')[0]
+        if fen == '':
+            f.seek(0)
+        else:
+            games.append({'idx': i, 'fen': fen, 'white': 0})
+            if i + 1 < Games:
+                games.append({'idx': i + 1, 'fen': fen, 'white': 1})
 
 # Play games, concurrently
 pool = multiprocessing.Pool(processes=Concurrency)
