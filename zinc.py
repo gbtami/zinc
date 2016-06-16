@@ -1,8 +1,7 @@
 #!/usr/bin/python3
-import os
-import chess, chess.uci
-from multiprocessing import Pool
+import os, multiprocessing
 import math, statistics
+import chess, chess.uci
 
 # Parameters
 Engines = [
@@ -13,28 +12,32 @@ Options = [
     {'Hash': 16, 'Contempt': 10},
     {'Hash': 16, 'Contempt': 10}
 ]
-TimeControl = {'depth': None, 'nodes': None, 'movetime': 100}
+TimeControl = {'depth': 8, 'nodes': None, 'movetime': 100}
 Draw = {'movenumber': 40, 'movecount': 8, 'score': 20}
 Resign = {'movecount': 3, 'score': 500}
 Openings = '../book5.epd'
 Games = 50
 Concurrency = 7
 
+def start_engine(i):
+    e = chess.uci.popen_engine(Engines[i]['file'])
+    e.uci()
+    e.name = Engines[i]['name']
+    for name in Options[i]:
+        if name not in e.options:
+            print('warning: "%s" is not a valid UCI Option for engine "%s"'
+                % (name, e.name))
+    e.setoption(Options[i])
+    e.isready()
+    e.ucinewgame()
+    e.info_handlers.append(chess.uci.InfoHandler())
+    return e
+
 def play(game):
     # Start engines
     engines = []
     for i in range(0, 2):
-        engines.append(chess.uci.popen_engine(Engines[i]['file']))
-        engines[i].uci()
-        engines[i].name = Engines[i]['name']
-        for name in Options[i]:
-            if name not in engines[i].options:
-                print('warning: "%s" is not a valid UCI Option for engine "%s"'
-                    % (name, engines[i].name))
-        engines[i].setoption(Options[i])
-        engines[i].isready()
-        engines[i].ucinewgame()
-        engines[i].info_handlers.append(chess.uci.InfoHandler())
+        engines.append(start_engine(i))
 
     # Setup the position, and determine which engine plays first
     board = chess.Board(game['fen'])
@@ -88,6 +91,8 @@ def play(game):
         else:
             result = '1/2-1/2'
 
+        result += ' (adjudication)'
+
     # Display results
     print('Game #%d: %s vs. %s: %s' % (game['idx'] + 1, engines[game['white']].name,
         engines[game['white'] ^ 1].name, result))
@@ -117,7 +122,7 @@ for i in range(0, Games, 2):
 f.close()
 
 # Play games, concurrently
-pool = Pool(processes=Concurrency)
+pool = multiprocessing.Pool(processes=Concurrency)
 results = pool.map(play, games)
 pool.close()
 pool.join()
