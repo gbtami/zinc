@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-import os, multiprocessing
+import os, multiprocessing, time
 import math, statistics
 import chess, chess.uci
 
@@ -12,7 +12,7 @@ Options = [
     {'Hash': 16, 'Contempt': 10},
     {'Hash': 16, 'Contempt': 10}
 ]
-TimeControl = {'depth': 8, 'nodes': None, 'movetime': 100}
+TimeControl = {'depth': None, 'nodes': None, 'movetime': None, 'time': 2, 'inc': 0.02}
 Draw = {'movenumber': 40, 'movecount': 8, 'score': 20}
 Resign = {'movecount': 3, 'score': 500}
 Openings = '../book5.epd'
@@ -34,10 +34,11 @@ def start_engine(i):
     return e
 
 def play(game):
-    # Start engines
-    engines = []
+    # Start engines and clocks
+    engines, clocks = [], []
     for i in range(0, 2):
         engines.append(start_engine(i))
+        clocks.append(TimeControl['time'])
 
     # Setup the position, and determine which engine plays first
     board = chess.Board(game['fen'])
@@ -45,15 +46,28 @@ def play(game):
 
     # Play the game
     drawCnt, resignCnt = 0, 0 # in plies
+    lostOnTime = None
     while (not board.is_game_over(True)):
         engines[i].position(board)
         engines[i].isready()
 
+        startTime = time.time()
         bestmove, ponder = engines[i].go(
             depth = TimeControl['depth'],
             nodes = TimeControl['nodes'],
-            movetime = TimeControl['movetime']
+            movetime = TimeControl['movetime'],
+            wtime = int(clocks[game['white']] * 1000),
+            btime = int(clocks[game['white'] ^ 1] * 1000),
+            winc = TimeControl['inc'],
+            binc = TimeControl['inc']
         )
+        elapsed = time.time() - startTime
+
+        clocks[i] -= elapsed
+        if (clocks[i] < 0):
+            lostOnTime = i
+            break
+        clocks[i] += TimeControl['inc']
 
         score = engines[i].info_handlers[0].info['score'][1].cp
         if score != None:
@@ -83,15 +97,17 @@ def play(game):
 
     # Determine result in case of adjudication
     if result == '*':
-        if resignCnt >= 2 * Resign['movecount']:
+        if lostOnTime != None:
+            result = '1-0' if lostOnTime == game['white'] else '0-1'
+            result += ' (lost on time)'
+        elif resignCnt >= 2 * Resign['movecount']:
             if score > 0:
                 result = '1-0' if board.turn == chess.WHITE else '0-1'
             else:
                 result = '0-1' if board.turn == chess.WHITE else '1-0'
+            result += ' (adjudicated)'
         else:
-            result = '1/2-1/2'
-
-        result += ' (adjudication)'
+            result = '1/2-1/2 (adjudicated)'
 
     # Display results
     print('Game #%d: %s vs. %s: %s' % (game['idx'] + 1, engines[game['white']].name,
