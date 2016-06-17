@@ -93,32 +93,33 @@ def play(game):
         board.push(bestmove)
         i ^= 1
 
-    result = board.result(True)
+    result, reason = board.result(True), 'chess rules'
 
     # Determine result in case of adjudication
     if result == '*':
         if lostOnTime != None:
             result = '1-0' if lostOnTime == game['white'] else '0-1'
-            result += ' (lost on time)'
+            reason = 'lost on time'
         elif resignCnt >= 2 * Resign['movecount']:
+            reason = 'resigned'
             if score > 0:
                 result = '1-0' if board.turn == chess.WHITE else '0-1'
             else:
                 result = '0-1' if board.turn == chess.WHITE else '1-0'
-            result += ' (adjudicated)'
         else:
-            result = '1/2-1/2 (adjudicated)'
+            result = '1/2-1/2'
+            reason = 'drawn by adjudication'
 
     # Display results
-    print('Game #%d: %s vs. %s: %s' % (game['idx'] + 1, engines[game['white']].name,
-        engines[game['white'] ^ 1].name, result))
+    print('Game #%d: %s vs. %s: %s (%s)' % (game['idx'] + 1, engines[game['white']].name,
+        engines[game['white'] ^ 1].name, result, reason))
 
     # Close engines
     for i in range(0, 2):
         engines[i].quit()
 
     # Return numeric score, from engine #0 perspective
-    scoreWhite = 1.0 if result == "1-0" else (0 if result == "0-1" else 0.5)
+    scoreWhite = 1.0 if result == '1-0' else (0 if result == '0-1' else 0.5)
     return scoreWhite if game['white'] == 0 else 1 - scoreWhite
 
 # Prepare game elements of the form [idx, fen, white], where
