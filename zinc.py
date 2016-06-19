@@ -16,23 +16,26 @@ TimeControl = {'depth': None, 'nodes': None, 'movetime': None, 'time': 2, 'inc':
 Draw = {'movenumber': 40, 'movecount': 8, 'score': 20}
 Resign = {'movecount': 3, 'score': 500}
 Openings = '../book5.epd'
-Games = 50
-Concurrency = 7
+Debug=True
+Games = 10
+Concurrency = 2
 
 class UCI(object):
-    def __init__(self, cmd, name):
+    def __init__(self, cmd, name, debug):
         self.process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stdin=subprocess.PIPE, universal_newlines=True)
         self.name = name
+        self.debug = debug
         self.options = []
 
     def readline(self):
-        line = self.process.stdout.readline()
-        line = line[:-1]
-        # print('%s > %s' % (self.name, line))
+        line = self.process.stdout.readline()[:-1] # remove trailing '\n'
+        if self.debug:
+            print('{}({}) > {}'.format(self.name, self.process.pid, line))
         return line
 
     def writeline(self, string):
-        # print('%s < %s' % (self.name, string))
+        if self.debug:
+            print('{}({}) < {}'.format(self.name, self.process.pid, string))
         self.process.stdin.write(string)
         self.process.stdin.write('\n')
         self.process.stdin.flush()
@@ -86,7 +89,7 @@ class UCI(object):
         self.process.wait()
 
 def start_engine(i):
-    e = UCI(Engines[i]['file'], Engines[i]['name'])
+    e = UCI(Engines[i]['file'], Engines[i]['name'], Debug)
     e.uci()
 
     for name in Options[i]:
@@ -213,10 +216,8 @@ with open(Openings, 'r') as f:
                 games.append({'idx': i + 1, 'fen': fen, 'white': 1})
 
 # Play games, concurrently
-pool = multiprocessing.Pool(processes=Concurrency)
-results = pool.map(play, games)
-pool.close()
-pool.join()
+with multiprocessing.Pool(processes=Concurrency) as pool:
+    results = pool.map(play, games)
 
 if Games >= 2:
     # Print statistics
