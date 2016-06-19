@@ -16,7 +16,7 @@ TimeControl = {'depth': None, 'nodes': None, 'movetime': None, 'time': 2, 'inc':
 Draw = {'movenumber': 40, 'movecount': 8, 'score': 20}
 Resign = {'movecount': 3, 'score': 500}
 Openings = '../book5.epd'
-Debug=True
+Debug=False
 Games = 10
 Concurrency = 2
 
@@ -75,12 +75,16 @@ class UCI(object):
         while True:
             line = self.readline()
             if line.startswith('info'):
-                subStr = 'score cp '
-                i = line.find(subStr)
+                i = line.find('score ')
                 if i != -1:
-                    tokens = line[(i + len(subStr)):].split()
-                    if ('lowerbound' not in tokens) and ('upperbound' not in tokens):
-                        score = int(tokens[0])
+                    tokens = line[(i + len('score ')):].split()
+                    assert len(tokens) >= 2
+                    if tokens[0] == 'cp':
+                        if len(tokens) == 2 or not tokens[2].endswith('bound'):
+                            score = int(tokens[1])
+                    elif tokens[0] == 'mate':
+                        score = math.copysign(Resign['score'], int(tokens[1]))
+
             elif line.startswith('bestmove'):
                 return line.split()[1], score
 
