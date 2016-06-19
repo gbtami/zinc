@@ -1,3 +1,4 @@
+#!/usr/bin/python3
 # Zinc, a chess engine testing tool. Copyright 2016 lucasart.
 #
 # Zinc is free software: you can redistribute it and/or modify it under the terms of the GNU General
@@ -10,35 +11,36 @@
 #
 # You should have received a copy of the GNU General Public License along with this program. If not,
 # see <http://www.gnu.org/licenses/>.
-
-#!/usr/bin/python3
 import os, subprocess, multiprocessing, time
 import math, statistics
 import chess
 
 # Parameters
 Engines = [
-    {'file': '../Stockfish/test', 'name' : 'test'},
-    {'file': '../Stockfish/base', 'name' : 'base'}
+    {'file': '../Stockfish/test', 'name' : 'test', 'debug': False},
+    {'file': '../Stockfish/base', 'name' : 'base', 'debug': False}
 ]
 Options = [
     {'Hash': 16, 'Threads': 1},
     {'Hash': 16, 'Threads': 1}
 ]
-TimeControl = {'depth': None, 'nodes': None, 'movetime': None, 'time': 2, 'inc': 0.02}
+TimeControls = [
+    {'depth': None, 'nodes': None, 'movetime': None, 'time': 2, 'inc': 0.02},
+    {'depth': None, 'nodes': None, 'movetime': None, 'time': 2, 'inc': 0.02}
+]
 Draw = {'movenumber': 40, 'movecount': 8, 'score': 20}
 Resign = {'movecount': 3, 'score': 500}
 Openings = '../book5.epd'
-Debug=False
 Games = 10
-Concurrency = 2
+Concurrency = 1
 
 class UCI(object):
-    def __init__(self, cmd, name, debug):
-        self.process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stdin=subprocess.PIPE, universal_newlines=True)
-        self.name = name
-        self.debug = debug
+    def __init__(self, engine):
+        self.process = subprocess.Popen(engine['file'], stdout=subprocess.PIPE, stdin=subprocess.PIPE, universal_newlines=True)
+        self.name = engine['name']
+        self.debug = engine['debug']
         self.options = []
+        self.time = None
 
     def readline(self):
         line = self.process.stdout.readline()[:-1] # remove trailing '\n'
@@ -77,6 +79,10 @@ class UCI(object):
         while self.readline() != 'readyok':
             pass
 
+    def newgame(self, timeControl):
+        self.writeline('ucinewgame')
+        self.time = timeControl['time']
+
     def go(self, args):
         tokens = ['go']
         for name in args:
@@ -105,28 +111,34 @@ class UCI(object):
         self.writeline('quit')
         self.process.wait()
 
-def start_engine(i):
-    e = UCI(Engines[i]['file'], Engines[i]['name'], Debug)
-    e.uci()
+class UCIPair(object):
+    def __init__(self, engines):
+        assert len(engines) == 2
+        self.engines = []
+        for i in range(0, 2):
+            self.engines.append(UCI(engines[i]))
+            self.engines[i].uci()
+            for name in Options[i]:
+                if name not in self.engines[i].options:
+                    print('warning: "{}" is not a valid UCI Option for engine "{}"'.format(name, self.engines[i].name))
+            self.engines[i].setoption(Options[i])
+            self.engines[i].isready()
 
-    for name in Options[i]:
-        if name not in e.options:
-            print('warning: "%s" is not a valid UCI Option for engine "%s"' % (name, e.name))
+    def newgame(self, timeControls):
+        for i in range(0, 2):
+            self.engines[i].newgame(timeControls[i])
 
-    e.setoption(Options[i])
-    e.isready()
-    e.writeline('ucinewgame')
-    return e
+    def __del__(self):
+        print('deleting pair')
+        for i in range(0, 2):
+            self.engines[i].quit()
 
 def to_msec(sec):
     return int(sec * 1000)
 
 def play(game):
-    # Start engines and clocks
-    engines, clocks = [], []
-    for i in range(0, 2):
-        engines.append(start_engine(i))
-        clocks.append(TimeControl['time'])
+    pair = UCIPair(Engines)
+    pair.newgame(TimeControls)
 
     # Setup the position, and determine which engine plays first
     board = chess.Board(game['fen'])
@@ -141,28 +153,28 @@ def play(game):
         posCmd = 'position fen ' + game['fen']
         if uciMoves:
             posCmd += ' moves ' + ' '.join(uciMoves)
-        engines[i].writeline(posCmd)
-        engines[i].isready()
+        pair.engines[i].writeline(posCmd)
+        pair.engines[i].isready()
 
         startTime = time.time()
-        bestmove, score = engines[i].go({
-            'depth': TimeControl['depth'],
-            'nodes': TimeControl['nodes'],
-            'movetime': TimeControl['movetime'],
-            'wtime': to_msec(clocks[game['white']]),
-            'btime': to_msec(clocks[game['white'] ^ 1]),
-            'winc': to_msec(TimeControl['inc']),
-            'binc': to_msec(TimeControl['inc'])
+        bestmove, score = pair.engines[i].go({
+            'depth': TimeControls[i]['depth'],
+            'nodes': TimeControls[i]['nodes'],
+            'movetime': TimeControls[i]['movetime'],
+            'wtime': to_msec(pair.engines[game['white']].time),
+            'btime': to_msec(pair.engines[game['white'] ^ 1].time),
+            'winc': to_msec(TimeControls[i]['inc']),
+            'binc': to_msec(TimeControls[i]['inc'])
         })
         elapsed = time.time() - startTime
 
-        clocks[i] -= elapsed
+        pair.engines[i].time -= elapsed
 
-        if (clocks[i] < 0):
+        if (pair.engines[i].time < 0):
             lostOnTime = i
             break
 
-        clocks[i] += TimeControl['inc']
+        pair.engines[i].time += TimeControls[i]['inc']
 
         if score != None:
             # Resign adjudication
@@ -206,12 +218,8 @@ def play(game):
             reason = 'adjudication'
 
     # Display results
-    print('Game #%d: %s vs. %s: %s (%s)' % (game['idx'] + 1, engines[game['white']].name,
-        engines[game['white'] ^ 1].name, result, reason))
-
-    # Close engines
-    for i in range(0, 2):
-        engines[i].quit()
+    print('Game #%d: %s vs. %s: %s (%s)' % (game['idx'] + 1, pair.engines[game['white']].name,
+        pair.engines[game['white'] ^ 1].name, result, reason))
 
     # Return numeric score, from engine #0 perspective
     scoreWhite = 1.0 if result == '1-0' else (0 if result == '0-1' else 0.5)
