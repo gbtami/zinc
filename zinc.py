@@ -11,7 +11,7 @@
 #
 # You should have received a copy of the GNU General Public License along with this program. If not,
 # see <http://www.gnu.org/licenses/>.
-import os, subprocess, multiprocessing, time
+import os, subprocess, time, threading
 import math, statistics
 import chess
 
@@ -215,29 +215,58 @@ class Game():
         for e in self.engines:
             e.quit()
 
-def play(gameParam):
-    game = Game(Engines)
-    result, score = game.play_game(gameParam['fen'], gameParam['white'], TimeControls)
-    del game
+class GamePool():
+    def __init__(self, concurrency):
+        self.concurrency = concurrency
+        self.lock = threading.Lock()
+        self.threads, self.games = [], []
+        for i in range(concurrency):
+            self.games.append(Game(Engines))
+            self.threads.append(threading.Thread(target=self.play_games, args=(i,)))
 
-    print('Game #{}: {} vs. {}: {}'.format(gameParam['idx'], Engines[gameParam['white']]['name'],
-        Engines[gameParam['white'] ^ 1]['name'], result))
-    return score
+    def run(self, jobs, timeControls):
+        self.timeControls = timeControls
+        self.jobs = jobs
+        self.jobIdx = 0
 
-gameParams = []
+        for t in self.threads:
+            t.start()
+
+        for thread in self.threads:
+            thread.join()
+
+    def play_games(self, threadIdx):
+        while True:
+            self.lock.acquire()
+            jobIdx = self.jobIdx
+            if jobIdx >= len(self.jobs):
+                self.lock.release()
+                return
+            self.jobIdx += 1
+            self.lock.release()
+
+            result, score = self.games[threadIdx].play_game(
+                self.jobs[jobIdx]['fen'],
+                self.jobs[jobIdx]['white'],
+                self.timeControls)
+
+            print('Game #{}: {} vs. {}: {}'.format(
+                jobIdx, Engines[jobs[jobIdx]['white']]['name'],
+                Engines[jobs[jobIdx]['white'] ^ 1]['name'], result
+            ))
+
+jobs = []
 with open(Openings, 'r') as f:
     for i in range(0, Games, 2):
         fen = f.readline().split(';')[0]
         if fen == '':
             f.seek(0)
         else:
-            gameParams.append({'idx': i, 'fen': fen, 'white': 0})
+            jobs.append({'fen': fen, 'white': 0})
             if i + 1 < Games:
-                gameParams.append({'idx': i + 1, 'fen': fen, 'white': 1})
+                jobs.append({'fen': fen, 'white': 1})
 
-# Play games concurrently
-with multiprocessing.Pool(processes=Concurrency) as pool:
-    results = pool.map(play, gameParams)
+GamePool(Concurrency).run(jobs, TimeControls)
 
 if Games >= 2:
     # Print statistics
