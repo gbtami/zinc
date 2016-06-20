@@ -11,7 +11,7 @@
 #
 # You should have received a copy of the GNU General Public License along with this program. If not,
 # see <http://www.gnu.org/licenses/>.
-import os, subprocess, time, threading
+import os, subprocess, sys, time, multiprocessing
 import math, statistics
 import chess
 
@@ -211,49 +211,86 @@ class Game():
         scoreWhite = 1.0 if result == '1-0' else (0 if result == '0-1' else 0.5)
         return result, scoreWhite if whiteIdx == 0 else 1 - scoreWhite
 
-    def __del__(self):
-        for e in self.engines:
-            e.quit()
-
 class GamePool():
     def __init__(self, concurrency):
         self.concurrency = concurrency
-        self.lock = threading.Lock()
-        self.threads, self.games = [], []
+        self.processes = []
+
+        # Input / Output queues for the Processes
+        self.jobQueue = multiprocessing.Queue()
+        self.resultQueue = multiprocessing.Queue()
+
+        # Create a process for concurrency count
         for i in range(concurrency):
-            self.games.append(Game(Engines))
-            self.threads.append(threading.Thread(target=self.play_games, args=(i,)))
+            process = multiprocessing.Process(target=play_games, args=(self.jobQueue, self.resultQueue))
+            self.processes.append(process)
 
     def run(self, jobs, timeControls):
-        self.timeControls = timeControls
-        self.jobs = jobs
-        self.jobIdx = 0
+        # Fill jobQueue with games
+        for j in jobs:
+            self.jobQueue.put(j)
 
-        for t in self.threads:
-            t.start()
+        # Fill jobQueue with some dummy
+        # data as a means of indicating
+        # that all jobs are complete
+        for i in range(self.concurrency):
+            self.jobQueue.put(None)
 
-        for thread in self.threads:
-            thread.join()
+        try:
+            # Start each process
+            for p in self.processes:
+                p.start()
 
-    def play_games(self, threadIdx):
+            # Wait for each process to finish
+            for p in self.processes:
+                p.join()
+
+        except KeyboardInterrupt:
+            # Processes should be dead already, but let's make sure they are
+            for p in self.processes:
+                if p.is_alive():
+                    p.terminate()
+
+        # Unexpected exception
+        except:
+            print(sys.exc_info())
+
+        finally:
+            # Get game results from resultQueue
+            results = []
+            while not self.resultQueue.empty():
+                results.append(self.resultQueue.get())
+
+            # Print statistics
+            if len(results) >= 2:
+                score = statistics.mean(results)
+                margin = 1.96 * statistics.stdev(results) / math.sqrt(Games)
+                print('score = %.2f%% +/- %.2f%%' % (100 * score, 100 * margin))
+
+def play_games(jobQueue, resultQueue):
+    try:
+        game = Game(Engines)
+
         while True:
-            self.lock.acquire()
-            jobIdx = self.jobIdx
-            if jobIdx >= len(self.jobs):
-                self.lock.release()
+            job = jobQueue.get()
+            if job == None:
                 return
-            self.jobIdx += 1
-            self.lock.release()
 
-            result, score = self.games[threadIdx].play_game(
-                self.jobs[jobIdx]['fen'],
-                self.jobs[jobIdx]['white'],
-                self.timeControls)
+            result, score = game.play_game(job['fen'], job['white'], TimeControls)
 
             print('Game #{}: {} vs. {}: {}'.format(
-                jobIdx, Engines[jobs[jobIdx]['white']]['name'],
-                Engines[jobs[jobIdx]['white'] ^ 1]['name'], result
+                job['idx'], Engines[job['white']]['name'],
+                Engines[job['white'] ^ 1]['name'], result
             ))
+
+            resultQueue.put(score)
+
+    except KeyboardInterrupt:
+        pass
+
+    except:
+        # Unexpected error
+        print(sys.exc_info())
 
 jobs = []
 with open(Openings, 'r') as f:
@@ -262,14 +299,9 @@ with open(Openings, 'r') as f:
         if fen == '':
             f.seek(0)
         else:
-            jobs.append({'fen': fen, 'white': 0})
+            jobs.append({'idx': i, 'fen': fen, 'white': 0})
             if i + 1 < Games:
-                jobs.append({'fen': fen, 'white': 1})
+                jobs.append({'idx': i + 1, 'fen': fen, 'white': 1})
 
-GamePool(Concurrency).run(jobs, TimeControls)
-
-if Games >= 2:
-    # Print statistics
-    score = statistics.mean(results)
-    margin = 1.96 * statistics.stdev(results) / math.sqrt(Games)
-    print('score = %.2f%% +/- %.2f%%' % (100 * score, 100 * margin))
+if __name__ == '__main__':
+    GamePool(Concurrency).run(jobs, TimeControls)
