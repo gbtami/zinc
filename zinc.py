@@ -31,16 +31,15 @@ TimeControls = [
 Draw = {'movenumber': 40, 'movecount': 8, 'score': 20}
 Resign = {'movecount': 3, 'score': 500}
 Openings = '../book5.epd'
-Games = 10
-Concurrency = 1
+Games = 20
+Concurrency = 7
 
-class UCI(object):
+class UCI():
     def __init__(self, engine):
         self.process = subprocess.Popen(engine['file'], stdout=subprocess.PIPE, stdin=subprocess.PIPE, universal_newlines=True)
         self.name = engine['name']
         self.debug = engine['debug']
         self.options = []
-        self.time = None
 
     def readline(self):
         line = self.process.stdout.readline()[:-1] # remove trailing '\n'
@@ -79,9 +78,8 @@ class UCI(object):
         while self.readline() != 'readyok':
             pass
 
-    def newgame(self, timeControl):
+    def newgame(self):
         self.writeline('ucinewgame')
-        self.time = timeControl['time']
 
     def go(self, args):
         tokens = ['go']
@@ -111,11 +109,11 @@ class UCI(object):
         self.writeline('quit')
         self.process.wait()
 
-class UCIPair(object):
+class Game():
     def __init__(self, engines):
         assert len(engines) == 2
         self.engines = []
-        for i in range(0, 2):
+        for i in range(2):
             self.engines.append(UCI(engines[i]))
             self.engines[i].uci()
             for name in Options[i]:
@@ -124,125 +122,122 @@ class UCIPair(object):
             self.engines[i].setoption(Options[i])
             self.engines[i].isready()
 
-    def newgame(self, timeControls):
-        for i in range(0, 2):
-            self.engines[i].newgame(timeControls[i])
-
-    def __del__(self):
-        print('deleting pair')
-        for i in range(0, 2):
-            self.engines[i].quit()
-
-def to_msec(sec):
-    return int(sec * 1000)
-
-def play(game):
-    pair = UCIPair(Engines)
-    pair.newgame(TimeControls)
-
-    # Setup the position, and determine which engine plays first
-    board = chess.Board(game['fen'])
-    uciMoves = []
-    i = game['white'] ^ (board.turn == chess.BLACK)
-
-    # Play the game
-    drawCnt, resignCnt = 0, 0 # in plies
-    lostOnTime = None
-
-    while (not board.is_game_over(True)):
-        posCmd = 'position fen ' + game['fen']
-        if uciMoves:
-            posCmd += ' moves ' + ' '.join(uciMoves)
-        pair.engines[i].writeline(posCmd)
-        pair.engines[i].isready()
+    def play_move(self, turnIdx, whiteIdx):
+        def to_msec(sec):
+            return int(sec * 1000)
 
         startTime = time.time()
-        bestmove, score = pair.engines[i].go({
-            'depth': TimeControls[i]['depth'],
-            'nodes': TimeControls[i]['nodes'],
-            'movetime': TimeControls[i]['movetime'],
-            'wtime': to_msec(pair.engines[game['white']].time),
-            'btime': to_msec(pair.engines[game['white'] ^ 1].time),
-            'winc': to_msec(TimeControls[i]['inc']),
-            'binc': to_msec(TimeControls[i]['inc'])
+        bestmove, score = self.engines[turnIdx].go({
+            'depth': self.timeControls[turnIdx]['depth'],
+            'nodes': self.timeControls[turnIdx]['nodes'],
+            'movetime': self.timeControls[turnIdx]['movetime'],
+            'wtime': to_msec(self.timeControls[whiteIdx]['time']),
+            'btime': to_msec(self.timeControls[whiteIdx ^ 1]['time']),
+            'winc': to_msec(self.timeControls[whiteIdx]['inc']),
+            'binc': to_msec(self.timeControls[whiteIdx ^ 1]['inc'])
         })
         elapsed = time.time() - startTime
 
-        pair.engines[i].time -= elapsed
+        self.timeControls[turnIdx]['time'] -= elapsed
+        if self.timeControls[turnIdx]['time'] < 0:
+            raise TimeoutError
+        self.timeControls[turnIdx]['time'] += self.timeControls[turnIdx]['inc']
+        return bestmove, score
 
-        if (pair.engines[i].time < 0):
-            lostOnTime = i
-            break
+    def play_game(self, fen, whiteIdx, timeControls):
+        board = chess.Board(fen)
+        turnIdx = whiteIdx ^ (board.turn == chess.BLACK)
+        uciMoves = []
+        self.timeControls = timeControls
+        for e in self.engines:
+            e.newgame()
 
-        pair.engines[i].time += TimeControls[i]['inc']
+        drawCnt, resignCnt = 0, 0 # in plies
+        lostOnTime = None
 
-        if score != None:
-            # Resign adjudication
-            if abs(score) >= Resign['score']:
-                resignCnt += 1
-                if resignCnt >= 2 * Resign['movecount']:
-                    break
+        while (not board.is_game_over(True)):
+            posCmd = 'position fen ' + fen
+            if uciMoves:
+                posCmd += ' moves ' + ' '.join(uciMoves)
+            self.engines[turnIdx].writeline(posCmd)
+            self.engines[turnIdx].isready()
+
+            try:
+                bestmove, score = self.play_move(turnIdx, whiteIdx)
+            except TimeoutError:
+                lostOnTime = turnIdx
+                break
+
+            if score != None:
+                # Resign adjudication
+                if abs(score) >= Resign['score']:
+                    resignCnt += 1
+                    if resignCnt >= 2 * Resign['movecount']:
+                        break
+                else:
+                    resignCnt=0
+
+                # Draw adjudication
+                if abs(score) <= Draw['score']:
+                    drawCnt += 1
+                    if drawCnt >= 2 * Draw['movecount'] and board.fullmove_number >= Draw['movenumber']:
+                        break
+                else:
+                    drawCnt = 0
             else:
-                resignCnt=0
+                # Disable adjudication over mate scores
+                drawCnt, resignCnt = 0, 0
 
-            # Draw adjudication
-            if abs(score) <= Draw['score']:
-                drawCnt += 1
-                if drawCnt >= 2 * Draw['movecount'] and board.fullmove_number >= Draw['movenumber']:
-                    break
+            board.push_uci(bestmove)
+            uciMoves.append(bestmove)
+            turnIdx ^= 1
+
+        result, reason = board.result(True), 'chess rules'
+        if result == '*':
+            if lostOnTime != None:
+                result = '1-0' if lostOnTime == whiteIdx else '0-1'
+                reason = 'lost on time'
+            elif resignCnt >= 2 * Resign['movecount']:
+                reason = 'adjudication'
+                if score > 0:
+                    result = '1-0' if board.turn == chess.WHITE else '0-1'
+                else:
+                    result = '0-1' if board.turn == chess.WHITE else '1-0'
             else:
-                drawCnt = 0
-        else:
-            # Disable adjudication over mate scores
-            drawCnt, resignCnt = 0, 0
+                result = '1/2-1/2'
+                reason = 'adjudication'
 
-        board.push_uci(bestmove)
-        uciMoves.append(bestmove)
-        i ^= 1
+        # Return numeric score, from engine #0 perspective
+        scoreWhite = 1.0 if result == '1-0' else (0 if result == '0-1' else 0.5)
+        return result, scoreWhite if whiteIdx == 0 else 1 - scoreWhite
 
-    result, reason = board.result(True), 'chess rules'
+    def __del__(self):
+        for e in self.engines:
+            e.quit()
 
-    # Determine result in case of adjudication
-    if result == '*':
-        if lostOnTime != None:
-            result = '1-0' if lostOnTime == game['white'] else '0-1'
-            reason = 'lost on time'
-        elif resignCnt >= 2 * Resign['movecount']:
-            reason = 'adjudication'
-            if score > 0:
-                result = '1-0' if board.turn == chess.WHITE else '0-1'
-            else:
-                result = '0-1' if board.turn == chess.WHITE else '1-0'
-        else:
-            result = '1/2-1/2'
-            reason = 'adjudication'
+def play(gameParam):
+    game = Game(Engines)
+    result, score = game.play_game(gameParam['fen'], gameParam['white'], TimeControls)
+    del game
 
-    # Display results
-    print('Game #%d: %s vs. %s: %s (%s)' % (game['idx'] + 1, pair.engines[game['white']].name,
-        pair.engines[game['white'] ^ 1].name, result, reason))
+    print('Game #{}: {} vs. {}: {}'.format(gameParam['idx'], Engines[gameParam['white']]['name'],
+        Engines[gameParam['white'] ^ 1]['name'], result))
+    return score
 
-    # Return numeric score, from engine #0 perspective
-    scoreWhite = 1.0 if result == '1-0' else (0 if result == '0-1' else 0.5)
-    return scoreWhite if game['white'] == 0 else 1 - scoreWhite
-
-# Prepare game elements of the form [idx, fen, white], where
-# idx: game index, in range(0, Games)
-# fen: starting position
-# white: which engine plays white (0 or 1)
-games = []
+gameParams = []
 with open(Openings, 'r') as f:
     for i in range(0, Games, 2):
         fen = f.readline().split(';')[0]
         if fen == '':
             f.seek(0)
         else:
-            games.append({'idx': i, 'fen': fen, 'white': 0})
+            gameParams.append({'idx': i, 'fen': fen, 'white': 0})
             if i + 1 < Games:
-                games.append({'idx': i + 1, 'fen': fen, 'white': 1})
+                gameParams.append({'idx': i + 1, 'fen': fen, 'white': 1})
 
-# Play games, concurrently
+# Play games concurrently
 with multiprocessing.Pool(processes=Concurrency) as pool:
-    results = pool.map(play, games)
+    results = pool.map(play, gameParams)
 
 if Games >= 2:
     # Print statistics
