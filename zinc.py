@@ -25,18 +25,19 @@ Options = [
     {'Hash': 16, 'Threads': 1}
 ]
 TimeControls = [
-    {'depth': None, 'nodes': None, 'movetime': None, 'time': 2, 'inc': 0.02},
-    {'depth': None, 'nodes': None, 'movetime': None, 'time': 2, 'inc': 0.02}
+    {'depth': 8, 'nodes': None, 'movetime': None, 'time': 2, 'inc': 0.02},
+    {'depth': 8, 'nodes': None, 'movetime': None, 'time': 2, 'inc': 0.02}
 ]
 Draw = {'movenumber': 40, 'movecount': 8, 'score': 20}
 Resign = {'movecount': 3, 'score': 500}
 Openings = '../book5.epd'
-Games = 20
+Games = 1000
 Concurrency = 7
 
 class UCI():
     def __init__(self, engine):
-        self.process = subprocess.Popen(engine['file'], stdout=subprocess.PIPE, stdin=subprocess.PIPE, universal_newlines=True)
+        self.process = subprocess.Popen(engine['file'], stdout=subprocess.PIPE,
+            stdin=subprocess.PIPE, universal_newlines=True)
         self.name = engine['name']
         self.debug = engine['debug']
         self.options = []
@@ -105,10 +106,6 @@ class UCI():
             elif line.startswith('bestmove'):
                 return line.split()[1], score
 
-    def quit(self):
-        self.writeline('quit')
-        self.process.wait()
-
 class Game():
     def __init__(self, engines):
         assert len(engines) == 2
@@ -124,7 +121,7 @@ class Game():
 
     def play_move(self, turnIdx, whiteIdx):
         def to_msec(sec):
-            return int(sec * 1000)
+            return int(sec * 1000) if sec != None else None
 
         startTime = time.time()
         bestmove, score = self.engines[turnIdx].go({
@@ -138,10 +135,14 @@ class Game():
         })
         elapsed = time.time() - startTime
 
-        self.timeControls[turnIdx]['time'] -= elapsed
-        if self.timeControls[turnIdx]['time'] < 0:
-            raise TimeoutError
-        self.timeControls[turnIdx]['time'] += self.timeControls[turnIdx]['inc']
+        # Update clock
+        if self.timeControls[turnIdx]['time'] != None:
+            assert self.timeControls[turnIdx]['inc'] != None
+            self.timeControls[turnIdx]['time'] -= elapsed
+            if self.timeControls[turnIdx]['time'] < 0:
+                raise TimeoutError
+            self.timeControls[turnIdx]['time'] += self.timeControls[turnIdx]['inc']
+
         return bestmove, score
 
     def play_game(self, fen, whiteIdx, timeControls):
