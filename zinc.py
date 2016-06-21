@@ -231,30 +231,22 @@ class GamePool():
         for j in jobs:
             self.jobQueue.put(j)
 
-        # Fill jobQueue with some dummy
-        # data as a means of indicating
-        # that all jobs are complete
+        # Insert 'None' padding values at the end. See play_games() for explanation.
         for i in range(self.concurrency):
             self.jobQueue.put(None)
 
         try:
-            # Start each process
             for p in self.processes:
                 p.start()
 
-            # Wait for each process to finish
             for p in self.processes:
                 p.join()
 
         except KeyboardInterrupt:
-            # Processes should be dead already, but let's make sure they are
-            for p in self.processes:
-                if p.is_alive():
-                    p.terminate()
+            pass # processes are dead already
 
-        # Unexpected exception
         except:
-            print(sys.exc_info())
+            print(sys.exc_info()) # unexpected exception
 
         finally:
             # Get game results from resultQueue
@@ -273,6 +265,9 @@ def play_games(jobQueue, resultQueue):
         game = Game(Engines)
 
         while True:
+            # HACK: We can't just test jobQueue.empty(), then run jobQueue.get(). Between both
+            # operations, another process could steal a job from the queue. That's why we insert
+            # some padding 'None' values at the end of the queue
             job = jobQueue.get()
             if job == None:
                 return
