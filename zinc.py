@@ -17,22 +17,22 @@ import chess
 
 # Parameters
 Engines = [
-    {'file': '../Stockfish/test', 'name' : 'test', 'debug': False},
-    {'file': '../Stockfish/base', 'name' : 'base', 'debug': False}
+    {'file': '../Stockfish/test', 'name' : 'test', 'debug': True},
+    {'file': '../Stockfish/base', 'name' : 'base', 'debug': True}
 ]
 Options = [
     {'Hash': 16, 'Threads': 1},
     {'Hash': 16, 'Threads': 1}
 ]
 TimeControls = [
-    {'depth': 8, 'nodes': None, 'movetime': None, 'time': 2, 'inc': 0.02},
-    {'depth': 8, 'nodes': None, 'movetime': None, 'time': 2, 'inc': 0.02}
+    {'depth': None, 'nodes': None, 'movetime': None, 'time': 2, 'inc': 0.02, 'movestogo': 40},
+    {'depth': None, 'nodes': None, 'movetime': None, 'time': 2, 'inc': 0.02, 'movestogo': 40}
 ]
 Draw = {'movenumber': 40, 'movecount': 8, 'score': 20}
 Resign = {'movecount': 3, 'score': 500}
 Openings = '../book5.epd'
-Games = 1000
-Concurrency = 7
+Games = 1
+Concurrency = 1
 
 class UCI():
     def __init__(self, engine):
@@ -85,7 +85,7 @@ class UCI():
     def go(self, args):
         tokens = ['go']
         for name in args:
-            if args[name]:
+            if args[name] != None:
                 tokens += [name, str(args[name])]
         self.writeline(' '.join(tokens))
 
@@ -106,6 +106,27 @@ class UCI():
             elif line.startswith('bestmove'):
                 return line.split()[1], score
 
+class Clock():
+    def __init__(self, timeControl):
+        self.timeControl = timeControl
+        self.time = timeControl['time']
+        self.movestogo = timeControl['movestogo']
+
+    def consume(self, seconds):
+        if self.time != None:
+            self.time -= seconds
+            if self.time < 0:
+                raise TimeoutError
+            if self.timeControl['inc']:
+                self.time += self.timeControl['inc']
+
+        if self.movestogo != None:
+            self.movestogo -= 1
+            if self.movestogo <= 0:
+                self.movestogo = self.timeControl['movestogo']
+                if self.timeControl['time']:
+                    self.time += self.timeControl['time']
+
 class Game():
     def __init__(self, engines):
         assert len(engines) == 2
@@ -120,28 +141,24 @@ class Game():
             self.engines[i].isready()
 
     def play_move(self, turnIdx, whiteIdx):
-        def to_msec(sec):
-            return int(sec * 1000) if sec != None else None
+        def to_msec(seconds):
+            return int(seconds * 1000) if seconds != None else None
 
         startTime = time.time()
-        bestmove, score = self.engines[turnIdx].go({
-            'depth': self.timeControls[turnIdx]['depth'],
-            'nodes': self.timeControls[turnIdx]['nodes'],
-            'movetime': self.timeControls[turnIdx]['movetime'],
-            'wtime': to_msec(self.timeControls[whiteIdx]['time']),
-            'btime': to_msec(self.timeControls[whiteIdx ^ 1]['time']),
-            'winc': to_msec(self.timeControls[whiteIdx]['inc']),
-            'binc': to_msec(self.timeControls[whiteIdx ^ 1]['inc'])
-        })
-        elapsed = time.time() - startTime
 
-        # Update clock
-        if self.timeControls[turnIdx]['time'] != None:
-            assert self.timeControls[turnIdx]['inc'] != None
-            self.timeControls[turnIdx]['time'] -= elapsed
-            if self.timeControls[turnIdx]['time'] < 0:
-                raise TimeoutError
-            self.timeControls[turnIdx]['time'] += self.timeControls[turnIdx]['inc']
+        bestmove, score = self.engines[turnIdx].go({
+            'depth': self.clocks[turnIdx].timeControl['depth'],
+            'nodes': self.clocks[turnIdx].timeControl['nodes'],
+            'movetime': self.clocks[turnIdx].timeControl['movetime'],
+            'wtime': to_msec(self.clocks[whiteIdx].time),
+            'btime': to_msec(self.clocks[whiteIdx ^ 1].time),
+            'winc': to_msec(self.clocks[whiteIdx].timeControl['inc']),
+            'binc': to_msec(self.clocks[whiteIdx ^ 1].timeControl['inc']),
+            'movestogo': self.clocks[turnIdx].movestogo
+        })
+
+        elapsed = time.time() - startTime
+        self.clocks[turnIdx].consume(elapsed)
 
         return bestmove, score
 
@@ -149,7 +166,7 @@ class Game():
         board = chess.Board(fen)
         turnIdx = whiteIdx ^ (board.turn == chess.BLACK)
         uciMoves = []
-        self.timeControls = timeControls
+        self.clocks = [Clock(timeControls[0]), Clock(timeControls[1])]
         for e in self.engines:
             e.newgame()
 
