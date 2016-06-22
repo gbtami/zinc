@@ -30,7 +30,8 @@ TimeControls = [
 ]
 Draw = {'movenumber': 40, 'movecount': 8, 'score': 20}
 Resign = {'movecount': 3, 'score': 500}
-Openings = '../book5.epd'
+Openings = '../chess960.epd'
+Chess960 = True
 Games = 1
 Concurrency = 1
 
@@ -43,7 +44,7 @@ class UCI():
         self.options = []
 
     def readline(self):
-        line = self.process.stdout.readline()[:-1] # remove trailing '\n'
+        line = self.process.stdout.readline().rstrip()
         if self.debug:
             print('{}({}) > {}'.format(self.name, self.process.pid, line))
         return line
@@ -66,13 +67,16 @@ class UCI():
                     if tokens[i] == 'type':
                         break
                     name += tokens[i] + ' '
-                self.options.append(name[:-1])
+                self.options.append(name.rstrip())
             elif line == 'uciok':
                 break
 
-    def setoption(self, options):
+    def setoptions(self, options):
         for name in options:
-            self.writeline('setoption name {} value {}'.format(name, options[name]))
+            value = options[name]
+            if type(value) is bool:
+                value = str(value).lower()
+            self.writeline('setoption name {} value {}'.format(name, value))
 
     def isready(self):
         self.writeline('isready')
@@ -137,7 +141,9 @@ class Game():
             for name in Options[i]:
                 if name not in self.engines[i].options:
                     print('warning: "{}" is not a valid UCI Option for engine "{}"'.format(name, self.engines[i].name))
-            self.engines[i].setoption(Options[i])
+            self.engines[i].setoptions(Options[i])
+            if Chess960:
+                self.engines[i].setoptions({'UCI_Chess960': True})
             self.engines[i].isready()
 
     def play_move(self, turnIdx, whiteIdx):
@@ -163,7 +169,7 @@ class Game():
         return bestmove, score
 
     def play_game(self, fen, whiteIdx, timeControls):
-        board = chess.Board(fen)
+        board = chess.Board(fen, Chess960)
         turnIdx = whiteIdx ^ (board.turn == chess.BLACK)
         uciMoves = []
         self.clocks = [Clock(timeControls[0]), Clock(timeControls[1])]
@@ -308,7 +314,7 @@ def play_games(jobQueue, resultQueue):
 jobs = []
 with open(Openings, 'r') as f:
     for i in range(0, Games, 2):
-        fen = f.readline().split(';')[0]
+        fen = f.readline().rstrip().split(';')[0]
         if fen == '':
             f.seek(0)
         else:
