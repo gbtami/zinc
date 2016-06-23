@@ -13,27 +13,28 @@
 # see <http://www.gnu.org/licenses/>.
 import os, subprocess, sys, time, multiprocessing
 import math, statistics
-import chess
+import chess, chess.polyglot
 
 # Parameters
 Engines = [
-    {'file': '../Stockfish/test', 'name' : 'test', 'debug': True},
-    {'file': '../Stockfish/base', 'name' : 'base', 'debug': True}
+    {'file': '../Stockfish/test', 'name' : 'test', 'debug': False},
+    {'file': '../Stockfish/base', 'name' : 'base', 'debug': False}
 ]
 Options = [
     {'Hash': 16, 'Threads': 1},
     {'Hash': 16, 'Threads': 1}
 ]
 TimeControls = [
-    {'depth': None, 'nodes': None, 'movetime': None, 'time': 2, 'inc': 0.02, 'movestogo': 40},
-    {'depth': None, 'nodes': None, 'movetime': None, 'time': 2, 'inc': 0.02, 'movestogo': 40}
+    {'depth': None, 'nodes': None, 'movetime': None, 'time': 2, 'inc': 0.02, 'movestogo': None},
+    {'depth': None, 'nodes': None, 'movetime': None, 'time': 2, 'inc': 0.02, 'movestogo': None}
 ]
 Draw = {'movenumber': 40, 'movecount': 8, 'score': 20}
 Resign = {'movecount': 3, 'score': 500}
-Openings = '../chess960.epd'
+Openings = '../ProDeo.bin'
+BookDepth = 8
 Chess960 = True
-Games = 1
-Concurrency = 1
+Games = 20
+Concurrency = 7
 
 class UCI():
     def __init__(self, engine):
@@ -311,16 +312,29 @@ def play_games(jobQueue, resultQueue):
         # Unexpected error
         print(sys.exc_info())
 
-jobs = []
-with open(Openings, 'r') as f:
-    for i in range(0, Games, 2):
-        fen = f.readline().rstrip().split(';')[0]
-        if fen == '':
-            f.seek(0)
-        else:
-            jobs.append({'idx': i, 'fen': fen, 'white': 0})
-            if i + 1 < Games:
-                jobs.append({'idx': i + 1, 'fen': fen, 'white': 1})
-
 if __name__ == '__main__':
+
+    jobs = []
+    if Openings.endswith('.epd'): # EPD
+        with open(Openings, 'r') as f:
+            for i in range(0, Games, 2):
+                fen = f.readline().rstrip().split(';')[0]
+                if fen == '':
+                    f.seek(0)
+                else:
+                    jobs.append({'idx': i, 'fen': fen, 'white': 0})
+                    if i + 1 < Games:
+                        jobs.append({'idx': i + 1, 'fen': fen, 'white': 1})
+    else: # PolyGlot
+        assert Openings.endswith('.bin')
+        with chess.polyglot.open_reader(Openings) as book:
+            for i in range(0, Games, 2):
+                board = chess.Board(chess960 = Chess960)
+                while board.fullmove_number <= BookDepth:
+                    board.push(book.weighted_choice(board).move(Chess960))
+                fen = board.fen()
+                jobs.append({'idx': i, 'fen': fen, 'white': 0})
+                if i + 1 < Games:
+                    jobs.append({'idx': i + 1, 'fen': fen, 'white': 1})
+
     GamePool(Concurrency).run(jobs, TimeControls)
