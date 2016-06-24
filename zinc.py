@@ -61,14 +61,10 @@ class UCI():
         self.writeline('uci')
         while True:
             line = self.readline()
-            if line.startswith('option name'):
-                name = ''
+            if line.startswith('option name '):
                 tokens = line.split()
-                for i in range(2, len(tokens)):
-                    if tokens[i] == 'type':
-                        break
-                    name += tokens[i] + ' '
-                self.options.append(name.rstrip())
+                name = tokens[2:tokens.index('type')]
+                self.options.append(' '.join(name))
             elif line == 'uciok':
                 break
 
@@ -172,13 +168,13 @@ class Game():
     def play_game(self, fen, whiteIdx, timeControls):
         board = chess.Board(fen, Chess960)
         turnIdx = whiteIdx ^ (board.turn == chess.BLACK)
-        uciMoves = []
         self.clocks = [Clock(timeControls[0]), Clock(timeControls[1])]
         for e in self.engines:
             e.newgame()
 
         drawCnt, resignCnt = 0, 0 # in plies
         lostOnTime = None
+        uciMoves = []
 
         while (not board.is_game_over(True)):
             posCmd = 'position fen ' + fen
