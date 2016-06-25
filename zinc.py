@@ -13,7 +13,7 @@
 # see <http://www.gnu.org/licenses/>.
 import os, subprocess, sys, time, multiprocessing
 import math, statistics
-import chess, chess.polyglot
+import chess, chess.polyglot, chess.pgn
 
 # Parameters
 Engines = [
@@ -30,8 +30,9 @@ TimeControls = [
 ]
 Draw = {'movenumber': 40, 'movecount': 8, 'score': 20}
 Resign = {'movecount': 3, 'score': 500}
-Openings = '../ProDeo.bin'
-BookDepth = 8
+Openings = '../chess960.epd'
+BookDepth = None
+PgnOut = './out.pgn'
 Chess960 = True
 Games = 20
 Concurrency = 7
@@ -86,7 +87,7 @@ class UCI():
     def go(self, args):
         tokens = ['go']
         for name in args:
-            if args[name] != None:
+            if args[name] is not None:
                 tokens += [name, str(args[name])]
         self.writeline(' '.join(tokens))
 
@@ -114,14 +115,14 @@ class Clock():
         self.movestogo = timeControl['movestogo']
 
     def consume(self, seconds):
-        if self.time != None:
+        if self.time is not None:
             self.time -= seconds
             if self.time < 0:
                 raise TimeoutError
             if self.timeControl['inc']:
                 self.time += self.timeControl['inc']
 
-        if self.movestogo != None:
+        if self.movestogo is not None:
             self.movestogo -= 1
             if self.movestogo <= 0:
                 self.movestogo = self.timeControl['movestogo']
@@ -129,8 +130,9 @@ class Clock():
                     self.time += self.timeControl['time']
 
 class Game():
-    def __init__(self, engines):
+    def __init__(self, engines, pgnOut, lock):
         assert len(engines) == 2
+        self.pgnOut, self.lock = pgnOut, lock
         self.engines = []
         for i in range(2):
             self.engines.append(UCI(engines[i]))
@@ -145,7 +147,7 @@ class Game():
 
     def play_move(self, turnIdx, whiteIdx):
         def to_msec(seconds):
-            return int(seconds * 1000) if seconds != None else None
+            return int(seconds * 1000) if seconds is not None else None
 
         startTime = time.time()
 
@@ -186,7 +188,7 @@ class Game():
                 lostOnTime = turnIdx
                 break
 
-            if score != None:
+            if score is not None:
                 # Resign adjudication
                 if abs(score) >= Resign['score']:
                     resignCnt += 1
@@ -216,7 +218,7 @@ class Game():
 
         result, reason = board.result(True), 'chess rules'
         if result == '*':
-            if lostOnTime != None:
+            if lostOnTime is not None:
                 result = '1-0' if lostOnTime == whiteIdx else '0-1'
                 reason = 'lost on time'
             elif resignCnt >= 2 * Resign['movecount']:
@@ -229,22 +231,38 @@ class Game():
                 result = '1/2-1/2'
                 reason = 'adjudication'
 
+        # Prepare PGN
+        game = chess.pgn.Game.from_board(board)
+        game.headers['White'] = self.engines[whiteIdx].name
+        game.headers['Black'] = self.engines[whiteIdx ^ 1].name
+        game.headers['Result'] = result
+
+        # Write PGN to file (append)
+        if self.pgnOut is not None:
+            self.lock.acquire()
+            with open(self.pgnOut, 'a') as f:
+                print(game, file=f, end='\n\n')
+            self.lock.release()
+
         # Return numeric score, from engine #0 perspective
         scoreWhite = 1.0 if result == '1-0' else (0 if result == '0-1' else 0.5)
         return result, scoreWhite if whiteIdx == 0 else 1 - scoreWhite
 
 class GamePool():
-    def __init__(self, concurrency):
+    def __init__(self, concurrency, pgnOut):
         self.concurrency = concurrency
         self.processes = []
 
         # Input / Output queues for the Processes
         self.jobQueue = multiprocessing.Queue()
         self.resultQueue = multiprocessing.Queue()
+        self.pgnOut = pgnOut
+        self.lock = multiprocessing.Lock()
 
         # Create a process for concurrency count
         for i in range(concurrency):
-            process = multiprocessing.Process(target=play_games, args=(self.jobQueue, self.resultQueue))
+            process = multiprocessing.Process(target=play_games,
+                args=(self.jobQueue, self.resultQueue, self.pgnOut, self.lock))
             self.processes.append(process)
 
     def run(self, jobs, timeControls):
@@ -281,16 +299,16 @@ class GamePool():
                 margin = 1.96 * statistics.stdev(results) / math.sqrt(Games)
                 print('score = %.2f%% +/- %.2f%%' % (100 * score, 100 * margin))
 
-def play_games(jobQueue, resultQueue):
+def play_games(jobQueue, resultQueue, pgnOut, lock):
     try:
-        game = Game(Engines)
+        game = Game(Engines, pgnOut, lock)
 
         while True:
             # HACK: We can't just test jobQueue.empty(), then run jobQueue.get(). Between both
             # operations, another process could steal a job from the queue. That's why we insert
             # some padding 'None' values at the end of the queue
             job = jobQueue.get()
-            if job == None:
+            if job is None:
                 return
 
             result, score = game.play_game(job['fen'], job['white'], TimeControls)
@@ -327,11 +345,11 @@ if __name__ == '__main__':
         with chess.polyglot.open_reader(Openings) as book:
             for i in range(0, Games, 2):
                 board = chess.Board(chess960 = Chess960)
-                while board.fullmove_number <= BookDepth:
+                while (BookDepth is None) or (board.fullmove_number <= BookDepth):
                     board.push(book.weighted_choice(board).move(Chess960))
                 fen = board.fen()
                 jobs.append({'idx': i, 'fen': fen, 'white': 0})
                 if i + 1 < Games:
                     jobs.append({'idx': i + 1, 'fen': fen, 'white': 1})
 
-    GamePool(Concurrency).run(jobs, TimeControls)
+    GamePool(Concurrency, PgnOut).run(jobs, TimeControls)
