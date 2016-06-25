@@ -174,13 +174,10 @@ class Game():
 
         drawCnt, resignCnt = 0, 0 # in plies
         lostOnTime = None
-        uciMoves = []
+        posCmd = ['position fen ', fen]
 
         while (not board.is_game_over(True)):
-            posCmd = 'position fen ' + fen
-            if uciMoves:
-                posCmd += ' moves ' + ' '.join(uciMoves)
-            self.engines[turnIdx].writeline(posCmd)
+            self.engines[turnIdx].writeline(' '.join(posCmd))
             self.engines[turnIdx].isready()
 
             try:
@@ -209,8 +206,12 @@ class Game():
                 # Disable adjudication over mate scores
                 drawCnt, resignCnt = 0, 0
 
+            if board.move_stack:
+                posCmd.append(bestmove)
+            else:
+                posCmd += ['moves', bestmove]
+
             board.push_uci(bestmove)
-            uciMoves.append(bestmove)
             turnIdx ^= 1
 
         result, reason = board.result(True), 'chess rules'
