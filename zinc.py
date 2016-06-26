@@ -40,7 +40,7 @@ Concurrency = 7
 class UCI():
     def __init__(self, engine):
         self.process = subprocess.Popen(engine['file'], stdout=subprocess.PIPE,
-            stdin=subprocess.PIPE, universal_newlines=True)
+            stdin=subprocess.PIPE, universal_newlines=True, bufsize=1)
         self.name = engine['name']
         self.debug = engine['debug']
         self.options = []
@@ -54,9 +54,7 @@ class UCI():
     def writeline(self, string):
         if self.debug:
             print('{}({}) < {}'.format(self.name, self.process.pid, string))
-        self.process.stdin.write(string)
-        self.process.stdin.write('\n')
-        self.process.stdin.flush()
+        self.process.stdin.write(string + '\n')
 
     def uci(self):
         self.writeline('uci')
@@ -139,7 +137,8 @@ class Game():
             self.engines[i].uci()
             for name in Options[i]:
                 if name not in self.engines[i].options:
-                    print('warning: "{}" is not a valid UCI Option for engine "{}"'.format(name, self.engines[i].name))
+                    print('warning: "{}" is not a valid UCI Option for engine "{}"'.format(
+                        name, self.engines[i].name))
             self.engines[i].setoptions(Options[i])
             if Chess960:
                 self.engines[i].setoptions({'UCI_Chess960': True})
