@@ -235,12 +235,14 @@ class Game():
         game.headers['White'] = self.engines[whiteIdx].name
         game.headers['Black'] = self.engines[whiteIdx ^ 1].name
         game.headers['Result'] = result
+        exporter = chess.pgn.StringExporter(headers=True, variations=False, comments=False)
+        pgnString = game.accept(exporter)
 
         # Write PGN to file (append)
         if self.pgnOut is not None:
             self.lock.acquire()
             with open(self.pgnOut, 'a') as f:
-                print(game, file=f, end='\n\n')
+                print(pgnString, file=f, end='\n\n')
             self.lock.release()
 
         # Return numeric score, from engine #0 perspective
