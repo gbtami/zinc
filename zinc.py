@@ -36,6 +36,7 @@ PgnOut = './out.pgn'
 Chess960 = True
 Games = 20
 Concurrency = 7
+RatingInterval = 10
 
 class UCI():
     def __init__(self, engine):
@@ -282,7 +283,7 @@ class GamePool():
 
                 # Update statistics
                 scores.append(r[0])
-                if len(scores) >= 2:
+                if (i+1) % RatingInterval == 0 and len(scores) >= 2:
                     mean = statistics.mean(scores)
                     margin = 1.96 * math.sqrt(statistics.variance(scores) / len(scores))
                     print('score of {} vs. {} = {:.2f}% +/- {:.2f}%'.format(
