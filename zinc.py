@@ -1,34 +1,43 @@
 #!/usr/bin/python3
 # Zinc, a chess engine testing tool. Copyright 2016 lucasart.
 #
-# Zinc is free software: you can redistribute it and/or modify it under the terms of the GNU General
-#  Public License as published by the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
+# Zinc is free software: you can redistribute it and/or modify it under the terms of the
+# GNU General Public License as published by the Free Software Foundation, either version
+# 3 of the License, or (at your option) any later version.
 #
-# Zinc is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the
-# implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General
-# Public License for more details.
+# Zinc is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
+# without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
+# PURPOSE. See the GNU General Public License for more details.
 #
-# You should have received a copy of the GNU General Public License along with this program. If not,
-# see <http://www.gnu.org/licenses/>.
-import subprocess, time, multiprocessing
-import math, statistics
+# You should have received a copy of the GNU General Public License along with this
+# program. If not, see <http://www.gnu.org/licenses/>.
+
 import collections
 import datetime
-import chess, chess.polyglot, chess.pgn
+import math
+import multiprocessing
+import statistics
+import subprocess
+import time
+
+import chess
+import chess.polyglot
+import chess.pgn
 
 # Parameters
 Engines = [
-    {'file': '../Stockfish/test', 'name' : 'test', 'debug': False},
-    {'file': '../Stockfish/base', 'name' : 'base', 'debug': False}
+    {'file': '../Stockfish/test', 'name': 'test', 'debug': False},
+    {'file': '../Stockfish/base', 'name': 'base', 'debug': False}
 ]
 Options = [
     {'Hash': 16, 'Threads': 1},
     {'Hash': 16, 'Threads': 1}
 ]
 TimeControls = [
-    {'depth': None, 'nodes': None, 'movetime': None, 'time': 2, 'inc': 0.02, 'movestogo': None},
-    {'depth': None, 'nodes': None, 'movetime': None, 'time': 2, 'inc': 0.02, 'movestogo': None}
+    {'depth': None, 'nodes': None, 'movetime': None, 'time': 2, 'inc': 0.02,
+        'movestogo': None},
+    {'depth': None, 'nodes': None, 'movetime': None, 'time': 2, 'inc': 0.02,
+        'movestogo': None}
 ]
 Draw = {'movenumber': 40, 'movecount': 8, 'score': 20}
 Resign = {'movecount': 3, 'score': 500}
@@ -39,6 +48,7 @@ Chess960 = True
 Games = 20
 Concurrency = 7
 RatingInterval = 10
+
 
 class UCI():
     def __init__(self, engine):
@@ -109,6 +119,7 @@ class UCI():
             elif line.startswith('bestmove'):
                 return line.split()[1], score
 
+
 class Clock():
     def __init__(self, timeControl):
         self.timeControl = timeControl
@@ -130,6 +141,7 @@ class Clock():
                 if self.timeControl['time']:
                     self.time += self.timeControl['time']
 
+
 class Game():
     def __init__(self, engines):
         assert len(engines) == 2
@@ -139,8 +151,8 @@ class Game():
             self.engines[i].uci()
             for name in Options[i]:
                 if name not in self.engines[i].options:
-                    print('warning: "{}" is not a valid UCI Option for engine "{}"'.format(
-                        name, self.engines[i].name))
+                    print('warning: "{}" is not a valid UCI Option for engine "{}"'
+                        .format(name, self.engines[i].name))
             self.engines[i].setoptions(Options[i])
             if Chess960:
                 self.engines[i].setoptions({'UCI_Chess960': True})
@@ -175,7 +187,7 @@ class Game():
         for e in self.engines:
             e.newgame()
 
-        drawCnt, resignCnt = 0, 0 # in plies
+        drawPlyCnt, resignPlyCnt = 0, 0
         lostOnTime = None
         posCmd = ['position fen ', fen]
 
@@ -192,22 +204,23 @@ class Game():
             if score is not None:
                 # Resign adjudication
                 if abs(score) >= Resign['score']:
-                    resignCnt += 1
-                    if resignCnt >= 2 * Resign['movecount']:
+                    resignPlyCnt += 1
+                    if resignPlyCnt >= 2 * Resign['movecount']:
                         break
                 else:
-                    resignCnt=0
+                    resignPlyCnt = 0
 
                 # Draw adjudication
                 if abs(score) <= Draw['score']:
-                    drawCnt += 1
-                    if drawCnt >= 2 * Draw['movecount'] and board.fullmove_number >= Draw['movenumber']:
+                    drawPlyCnt += 1
+                    if drawPlyCnt >= 2 * Draw['movecount'] \
+                            and board.fullmove_number >= Draw['movenumber']:
                         break
                 else:
-                    drawCnt = 0
+                    drawPlyCnt = 0
             else:
                 # Disable adjudication over mate scores
-                drawCnt, resignCnt = 0, 0
+                drawPlyCnt, resignPlyCnt = 0, 0
 
             if board.move_stack:
                 posCmd.append(bestmove)
@@ -222,7 +235,7 @@ class Game():
             if lostOnTime is not None:
                 result = '1-0' if lostOnTime == whiteIdx else '0-1'
                 reason = 'lost on time'
-            elif resignCnt >= 2 * Resign['movecount']:
+            elif resignPlyCnt >= 2 * Resign['movecount']:
                 reason = 'adjudication'
                 if score > 0:
                     result = '1-0' if board.turn == chess.WHITE else '0-1'
@@ -239,7 +252,7 @@ class Game():
             game.headers['Result'] = result
             game.headers['Date'] = datetime.date.today().isoformat()
             game.headers['Round'] = pgnRound
-            exporter = chess.pgn.StringExporter(headers=True, variations=False, comments=False)
+            exporter = chess.pgn.StringExporter(variations=False, comments=False)
             pgnText = game.accept(exporter)
         else:
             pgnText = None
@@ -247,6 +260,7 @@ class Game():
         # Return numeric score, from engine #0 perspective
         scoreWhite = 1.0 if result == '1-0' else (0 if result == '0-1' else 0.5)
         return result, scoreWhite if whiteIdx == 0 else 1 - scoreWhite, pgnText
+
 
 class GamePool():
     def __init__(self, concurrency, pgnOut):
@@ -269,7 +283,7 @@ class GamePool():
         for j in jobs:
             self.jobQueue.put(j)
 
-        # Insert 'None' padding values at the end. See play_games() for explanation.
+        # Insert 'None' padding values as a stopping buffer
         for i in range(self.concurrency):
             self.jobQueue.put(None)
 
@@ -297,21 +311,23 @@ class GamePool():
                 p.join()
 
         except KeyboardInterrupt:
-            pass # processes are dead already
+            pass  # processes are dead already
+
 
 def play_games(jobQueue, resultQueue, pgnOut):
     try:
         game = Game(Engines)
 
         while True:
-            # HACK: We can't just test jobQueue.empty(), then run jobQueue.get(). Between both
-            # operations, another process could steal a job from the queue. That's why we insert
-            # some padding 'None' values at the end of the queue
+            # HACK: We can't just test jobQueue.empty(), then run jobQueue.get(). Between
+            # both operations, another process could steal a job from the queue. That's
+            # why we insert some padding 'None' values at the end of the queue
             job = jobQueue.get()
             if job is None:
                 return
 
-            result, score, pgnText = game.play_game(job.fen, job.white, TimeControls, pgnOut, job.round)
+            result, score, pgnText = game.play_game(job.fen, job.white, TimeControls,
+                pgnOut, job.round)
 
             display = 'Game #{} ({} vs. {}): {}'.format(
                 job.round, Engines[job.white]['name'],
@@ -327,7 +343,7 @@ if __name__ == '__main__':
     Result = collections.namedtuple('Result', 'score display pgnText')
 
     jobs = []
-    if Openings.endswith('.epd'): # EPD
+    if Openings.endswith('.epd'):  # EPD
         with open(Openings, 'r') as f:
             for i in range(0, Games, 2):
                 fen = f.readline().rstrip().split(';')[0]
@@ -337,11 +353,11 @@ if __name__ == '__main__':
                     jobs.append(Job(round=i+1, fen=fen, white=0))
                     if i + 1 < Games:
                         jobs.append(Job(round=i+2, fen=fen, white=1))
-    else: # PolyGlot
+    else:  # PolyGlot
         assert Openings.endswith('.bin')
         with chess.polyglot.open_reader(Openings) as book:
             for i in range(0, Games, 2):
-                board = chess.Board(chess960 = Chess960)
+                board = chess.Board(chess960=Chess960)
                 while (BookDepth is None) or (board.fullmove_number <= BookDepth):
                     board.push(book.weighted_choice(board).move(Chess960))
                 fen = board.fen()
