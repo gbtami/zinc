@@ -11,7 +11,7 @@
 #
 # You should have received a copy of the GNU General Public License along with this program. If not,
 # see <http://www.gnu.org/licenses/>.
-import os, subprocess, sys, time, multiprocessing
+import subprocess, time, multiprocessing
 import math, statistics
 import chess, chess.polyglot, chess.pgn
 
@@ -285,9 +285,6 @@ class GamePool():
         except KeyboardInterrupt:
             pass # processes are dead already
 
-        except:
-            print(sys.exc_info()) # unexpected exception
-
         finally:
             # Get game results from resultQueue
             results = []
@@ -297,7 +294,7 @@ class GamePool():
             # Print statistics
             if len(results) >= 2:
                 score = statistics.mean(results)
-                margin = 1.96 * statistics.stdev(results) / math.sqrt(Games)
+                margin = 1.96 * statistics.stdev(results) / math.sqrt(len(results))
                 print('score = %.2f%% +/- %.2f%%' % (100 * score, 100 * margin))
 
 def play_games(jobQueue, resultQueue, pgnOut, lock):
@@ -323,10 +320,6 @@ def play_games(jobQueue, resultQueue, pgnOut, lock):
 
     except KeyboardInterrupt:
         pass
-
-    except:
-        # Unexpected error
-        print(sys.exc_info())
 
 if __name__ == '__main__':
 
