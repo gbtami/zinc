@@ -128,9 +128,8 @@ class Clock():
                     self.time += self.timeControl['time']
 
 class Game():
-    def __init__(self, engines, pgnOut, lock):
+    def __init__(self, engines):
         assert len(engines) == 2
-        self.pgnOut, self.lock = pgnOut, lock
         self.engines = []
         for i in range(2):
             self.engines.append(UCI(engines[i]))
@@ -166,7 +165,7 @@ class Game():
 
         return bestmove, score
 
-    def play_game(self, fen, whiteIdx, timeControls):
+    def play_game(self, fen, whiteIdx, timeControls, pgnRound=None, pgnOut=False):
         board = chess.Board(fen, Chess960)
         turnIdx = whiteIdx ^ (board.turn == chess.BLACK)
         self.clocks = [Clock(timeControls[0]), Clock(timeControls[1])]
@@ -230,40 +229,35 @@ class Game():
                 result = '1/2-1/2'
                 reason = 'adjudication'
 
-        # Prepare PGN
-        game = chess.pgn.Game.from_board(board)
-        game.headers['White'] = self.engines[whiteIdx].name
-        game.headers['Black'] = self.engines[whiteIdx ^ 1].name
-        game.headers['Result'] = result
-        exporter = chess.pgn.StringExporter(headers=True, variations=False, comments=False)
-        pgnString = game.accept(exporter)
-
-        # Write PGN to file (append)
-        if self.pgnOut is not None:
-            self.lock.acquire()
-            with open(self.pgnOut, 'a') as f:
-                print(pgnString, file=f, end='\n\n')
-            self.lock.release()
+        if pgnOut:
+            game = chess.pgn.Game.from_board(board)
+            game.headers['White'] = self.engines[whiteIdx].name
+            game.headers['Black'] = self.engines[whiteIdx ^ 1].name
+            game.headers['Result'] = result
+            game.headers['Round'] = pgnRound
+            exporter = chess.pgn.StringExporter(headers=True, variations=False, comments=False)
+            pgnString = game.accept(exporter)
+        else:
+            pgnString = None
 
         # Return numeric score, from engine #0 perspective
         scoreWhite = 1.0 if result == '1-0' else (0 if result == '0-1' else 0.5)
-        return result, scoreWhite if whiteIdx == 0 else 1 - scoreWhite
+        return result, scoreWhite if whiteIdx == 0 else 1 - scoreWhite, pgnString
 
 class GamePool():
     def __init__(self, concurrency, pgnOut):
         self.concurrency = concurrency
         self.processes = []
 
-        # Input / Output queues for the Processes
+        # I/O objects for the process pool
         self.jobQueue = multiprocessing.Queue()
         self.resultQueue = multiprocessing.Queue()
         self.pgnOut = pgnOut
-        self.lock = multiprocessing.Lock()
 
-        # Create a process for concurrency count
+        # Get the processes ready
         for i in range(concurrency):
             process = multiprocessing.Process(target=play_games,
-                args=(self.jobQueue, self.resultQueue, self.pgnOut, self.lock))
+                args=(self.jobQueue, self.resultQueue, pgnOut))
             self.processes.append(process)
 
     def run(self, jobs, timeControls):
@@ -279,27 +273,34 @@ class GamePool():
             for p in self.processes:
                 p.start()
 
+            scores = []
+            for i in range(0, len(jobs)):
+                r = self.resultQueue.get()
+
+                # Pretty-print game result
+                print(r[1])
+
+                # Update statistics
+                scores.append(r[0])
+                if len(scores) >= 2:
+                    mean = statistics.mean(scores)
+                    margin = 1.96 * math.sqrt(statistics.variance(scores) / len(scores))
+                    print('score of {} vs. {} = {:.2f}% +/- {:.2f}%'.format(
+                        Engines[0]['name'], Engines[1]['name'], 100*mean, 100*margin))
+
+                if self.pgnOut:
+                    with open(self.pgnOut, 'a') as f:
+                        print(r[2], file=f, end='\n\n')
+
             for p in self.processes:
                 p.join()
 
         except KeyboardInterrupt:
             pass # processes are dead already
 
-        finally:
-            # Get game results from resultQueue
-            results = []
-            while not self.resultQueue.empty():
-                results.append(self.resultQueue.get())
-
-            # Print statistics
-            if len(results) >= 2:
-                score = statistics.mean(results)
-                margin = 1.96 * statistics.stdev(results) / math.sqrt(len(results))
-                print('score = %.2f%% +/- %.2f%%' % (100 * score, 100 * margin))
-
-def play_games(jobQueue, resultQueue, pgnOut, lock):
+def play_games(jobQueue, resultQueue, pgnOut):
     try:
-        game = Game(Engines, pgnOut, lock)
+        game = Game(Engines)
 
         while True:
             # HACK: We can't just test jobQueue.empty(), then run jobQueue.get(). Between both
@@ -309,20 +310,18 @@ def play_games(jobQueue, resultQueue, pgnOut, lock):
             if job is None:
                 return
 
-            result, score = game.play_game(job['fen'], job['white'], TimeControls)
+            result, score, pgnString = game.play_game(job['fen'], job['white'], TimeControls, job['idx'], pgnOut)
 
-            print('Game #{}: {} vs. {}: {}'.format(
-                job['idx'], Engines[job['white']]['name'],
-                Engines[job['white'] ^ 1]['name'], result
-            ))
+            comment = 'Game #{} ({} vs. {}): {}'.format(
+                job['idx']+1, Engines[job['white']]['name'],
+                Engines[job['white'] ^ 1]['name'], result)
 
-            resultQueue.put(score)
+            resultQueue.put((score, comment, pgnString))
 
     except KeyboardInterrupt:
         pass
 
 if __name__ == '__main__':
-
     jobs = []
     if Openings.endswith('.epd'): # EPD
         with open(Openings, 'r') as f:
