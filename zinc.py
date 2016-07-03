@@ -13,6 +13,8 @@
 # see <http://www.gnu.org/licenses/>.
 import subprocess, time, multiprocessing
 import math, statistics
+import collections
+import datetime
 import chess, chess.polyglot, chess.pgn
 
 # Parameters
@@ -166,7 +168,7 @@ class Game():
 
         return bestmove, score
 
-    def play_game(self, fen, whiteIdx, timeControls, pgnRound=None, pgnOut=False):
+    def play_game(self, fen, whiteIdx, timeControls, returnPgn=False, pgnRound=None):
         board = chess.Board(fen, Chess960)
         turnIdx = whiteIdx ^ (board.turn == chess.BLACK)
         self.clocks = [Clock(timeControls[0]), Clock(timeControls[1])]
@@ -230,20 +232,21 @@ class Game():
                 result = '1/2-1/2'
                 reason = 'adjudication'
 
-        if pgnOut:
+        if returnPgn:
             game = chess.pgn.Game.from_board(board)
             game.headers['White'] = self.engines[whiteIdx].name
             game.headers['Black'] = self.engines[whiteIdx ^ 1].name
             game.headers['Result'] = result
+            game.headers['Date'] = datetime.date.today().isoformat()
             game.headers['Round'] = pgnRound
             exporter = chess.pgn.StringExporter(headers=True, variations=False, comments=False)
-            pgnString = game.accept(exporter)
+            pgnText = game.accept(exporter)
         else:
-            pgnString = None
+            pgnText = None
 
         # Return numeric score, from engine #0 perspective
         scoreWhite = 1.0 if result == '1-0' else (0 if result == '0-1' else 0.5)
-        return result, scoreWhite if whiteIdx == 0 else 1 - scoreWhite, pgnString
+        return result, scoreWhite if whiteIdx == 0 else 1 - scoreWhite, pgnText
 
 class GamePool():
     def __init__(self, concurrency, pgnOut):
@@ -277,12 +280,9 @@ class GamePool():
             scores = []
             for i in range(0, len(jobs)):
                 r = self.resultQueue.get()
+                print(r.display)
 
-                # Pretty-print game result
-                print(r[1])
-
-                # Update statistics
-                scores.append(r[0])
+                scores.append(r.score)
                 if (i+1) % RatingInterval == 0 and len(scores) >= 2:
                     mean = statistics.mean(scores)
                     margin = 1.96 * math.sqrt(statistics.variance(scores) / len(scores))
@@ -291,7 +291,7 @@ class GamePool():
 
                 if self.pgnOut:
                     with open(self.pgnOut, 'a') as f:
-                        print(r[2], file=f, end='\n\n')
+                        print(r.pgnText, file=f, end='\n\n')
 
             for p in self.processes:
                 p.join()
@@ -311,18 +311,21 @@ def play_games(jobQueue, resultQueue, pgnOut):
             if job is None:
                 return
 
-            result, score, pgnString = game.play_game(job['fen'], job['white'], TimeControls, job['idx'], pgnOut)
+            result, score, pgnText = game.play_game(job.fen, job.white, TimeControls, pgnOut, job.round)
 
-            comment = 'Game #{} ({} vs. {}): {}'.format(
-                job['idx']+1, Engines[job['white']]['name'],
-                Engines[job['white'] ^ 1]['name'], result)
+            display = 'Game #{} ({} vs. {}): {}'.format(
+                job.round, Engines[job.white]['name'],
+                Engines[job.white ^ 1]['name'], result)
 
-            resultQueue.put((score, comment, pgnString))
+            resultQueue.put(Result(score=score, display=display, pgnText=pgnText))
 
     except KeyboardInterrupt:
         pass
 
 if __name__ == '__main__':
+    Job = collections.namedtuple('Job', 'round fen white')
+    Result = collections.namedtuple('Result', 'score display pgnText')
+
     jobs = []
     if Openings.endswith('.epd'): # EPD
         with open(Openings, 'r') as f:
@@ -331,9 +334,9 @@ if __name__ == '__main__':
                 if fen == '':
                     f.seek(0)
                 else:
-                    jobs.append({'idx': i, 'fen': fen, 'white': 0})
+                    jobs.append(Job(round=i+1, fen=fen, white=0))
                     if i + 1 < Games:
-                        jobs.append({'idx': i + 1, 'fen': fen, 'white': 1})
+                        jobs.append(Job(round=i+2, fen=fen, white=1))
     else: # PolyGlot
         assert Openings.endswith('.bin')
         with chess.polyglot.open_reader(Openings) as book:
@@ -342,8 +345,8 @@ if __name__ == '__main__':
                 while (BookDepth is None) or (board.fullmove_number <= BookDepth):
                     board.push(book.weighted_choice(board).move(Chess960))
                 fen = board.fen()
-                jobs.append({'idx': i, 'fen': fen, 'white': 0})
+                jobs.append(Job(round=i+1, fen=fen, white=0))
                 if i + 1 < Games:
-                    jobs.append({'idx': i + 1, 'fen': fen, 'white': 1})
+                    jobs.append(Job(round=i+2, fen=fen, white=1))
 
     GamePool(Concurrency, PgnOut).run(jobs, TimeControls)
