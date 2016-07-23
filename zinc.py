@@ -262,56 +262,51 @@ class Game():
         return result, scoreWhite if whiteIdx == 0 else 1 - scoreWhite, pgnText
 
 
-class GamePool():
-    def __init__(self, concurrency, pgnOut):
-        self.concurrency = concurrency
-        self.processes = []
+def run_pool(jobs, timeControls, concurrency, pgnOut):
+    # I/O objects for the process pool
+    jobQueue = multiprocessing.Queue()
+    resultQueue = multiprocessing.Queue()
 
-        # I/O objects for the process pool
-        self.jobQueue = multiprocessing.Queue()
-        self.resultQueue = multiprocessing.Queue()
-        self.pgnOut = pgnOut
+    # Prepare the processes
+    processes = []
+    for i in range(concurrency):
+        process = multiprocessing.Process(target=play_games,
+            args=(jobQueue, resultQueue, pgnOut))
+        processes.append(process)
 
-        # Get the processes ready
-        for i in range(concurrency):
-            process = multiprocessing.Process(target=play_games,
-                args=(self.jobQueue, self.resultQueue, pgnOut))
-            self.processes.append(process)
+    # Fill jobQueue with games
+    for j in jobs:
+        jobQueue.put(j)
 
-    def run(self, jobs, timeControls):
-        # Fill jobQueue with games
-        for j in jobs:
-            self.jobQueue.put(j)
+    # Insert 'None' padding values as a stopping buffer
+    for i in range(concurrency):
+        jobQueue.put(None)
 
-        # Insert 'None' padding values as a stopping buffer
-        for i in range(self.concurrency):
-            self.jobQueue.put(None)
+    try:
+        for p in processes:
+            p.start()
 
-        try:
-            for p in self.processes:
-                p.start()
+        scores = []
+        for i in range(0, len(jobs)):
+            r = resultQueue.get()
+            print(r.display)
 
-            scores = []
-            for i in range(0, len(jobs)):
-                r = self.resultQueue.get()
-                print(r.display)
+            scores.append(r.score)
+            if (i+1) % RatingInterval == 0 and len(scores) >= 2:
+                mean = statistics.mean(scores)
+                margin = 1.96 * math.sqrt(statistics.variance(scores) / len(scores))
+                print('score of {0} vs. {1} = {2:.2f}% +/- {3:.2f}%'.format(
+                    Engines[0]['name'], Engines[1]['name'], 100*mean, 100*margin))
 
-                scores.append(r.score)
-                if (i+1) % RatingInterval == 0 and len(scores) >= 2:
-                    mean = statistics.mean(scores)
-                    margin = 1.96 * math.sqrt(statistics.variance(scores) / len(scores))
-                    print('score of {0} vs. {1} = {2:.2f}% +/- {3:.2f}%'.format(
-                        Engines[0]['name'], Engines[1]['name'], 100*mean, 100*margin))
+            if pgnOut:
+                with open(pgnOut, 'a') as f:
+                    print(r.pgnText, file=f, end='\n\n')
 
-                if self.pgnOut:
-                    with open(self.pgnOut, 'a') as f:
-                        print(r.pgnText, file=f, end='\n\n')
+        for p in processes:
+            p.join()
 
-            for p in self.processes:
-                p.join()
-
-        except KeyboardInterrupt:
-            pass  # processes are dead already
+    except KeyboardInterrupt:
+        pass  # processes are dead already
 
 
 def play_games(jobQueue, resultQueue, pgnOut):
@@ -365,4 +360,4 @@ if __name__ == '__main__':
                 if i + 1 < Games:
                     jobs.append(Job(round=i+2, fen=fen, white=1))
 
-    GamePool(Concurrency, PgnOut).run(jobs, TimeControls)
+    run_pool(jobs, TimeControls, Concurrency, PgnOut)
