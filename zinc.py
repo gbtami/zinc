@@ -12,11 +12,12 @@
 # You should have received a copy of the GNU General Public License along with this
 # program. If not, see <http://www.gnu.org/licenses/>.
 
+from __future__ import print_function  # Python 2.7 compatibility
+
 import collections
 import datetime
 import math
 import multiprocessing
-import statistics
 import subprocess
 import time
 
@@ -43,7 +44,7 @@ Draw = {'movenumber': 40, 'movecount': 8, 'score': 20}
 Resign = {'movecount': 3, 'score': 500}
 Openings = '../chess960.epd'
 BookDepth = None
-PgnOut = './out.pgn'
+PgnOut = None
 Chess960 = True
 Games = 20
 Concurrency = 7
@@ -118,6 +119,10 @@ class UCI():
 
             elif line.startswith('bestmove'):
                 return line.split()[1], score
+
+
+class TimeoutError(Exception):  # Python 2.7 compatibility
+    pass
 
 
 class Clock():
@@ -263,10 +268,13 @@ class Game():
 
 
 def print_score(scores):
-    mean = statistics.mean(scores)
-    margin = 1.96 * math.sqrt(statistics.variance(scores) / len(scores))
-    print('score of {0} vs. {1} = {2:.2f}% +/- {3:.2f}%'.format(
-        Engines[0]['name'], Engines[1]['name'], 100*mean, 100*margin))
+    N = len(scores)
+    if N >= 2:
+        mean = sum(scores) / N
+        variance = sum((x - mean)**2 for x in scores) / (N - 1)
+        margin = 1.96 * math.sqrt(variance / N)
+        print('score of {0} vs. {1} = {2:.2f}% +/- {3:.2f}%'.format(
+            Engines[0]['name'], Engines[1]['name'], 100*mean, 100*margin))
 
 
 def run_pool(fens, timeControls, concurrency, pgnOut):
@@ -283,7 +291,7 @@ def run_pool(fens, timeControls, concurrency, pgnOut):
 
     # Prepare the jobQueue
     for idx, fen in enumerate(fens):
-        jobQueue.put(Job(round=idx+1, fen=fen, white=idx%2))
+        jobQueue.put(Job(round=idx+1, fen=fen, white=idx % 2))
 
     # Insert 'None' padding values as a stopping buffer
     for i in range(concurrency):
@@ -299,7 +307,7 @@ def run_pool(fens, timeControls, concurrency, pgnOut):
             print(r.display)
 
             scores.append(r.score)
-            if (i+1) % RatingInterval == 0 and len(scores) >= 2:
+            if (i+1) % RatingInterval == 0:
                 print_score(scores)
 
             if pgnOut:
