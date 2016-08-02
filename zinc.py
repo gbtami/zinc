@@ -345,10 +345,10 @@ def play_games(jobQueue, resultQueue, pgnOut):
     except KeyboardInterrupt:
         pass
 
-if __name__ == '__main__':
-    Job = collections.namedtuple('Job', 'round fen white')
-    Result = collections.namedtuple('Result', 'score display pgnText')
+Job = collections.namedtuple('Job', 'round fen white')
+Result = collections.namedtuple('Result', 'score display pgnText')
 
+if __name__ == '__main__':
     fens = []
     if Openings.endswith('.epd'):  # EPD
         with open(Openings, 'r') as f:
