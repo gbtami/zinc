@@ -194,7 +194,7 @@ class Game():
 
         drawPlyCnt, resignPlyCnt = 0, 0
         lostOnTime = None
-        posCmd = ['position fen ', fen]
+        posCmd = ['position fen', fen]
 
         while (not board.is_game_over(True)):
             self.engines[turnIdx].writeline(' '.join(posCmd))
