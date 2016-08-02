@@ -147,124 +147,110 @@ class Clock():
                     self.time += self.timeControl['time']
 
 
-class Game():
-    def __init__(self, engines):
-        assert len(engines) == 2
-        self.engines = []
-        for i in range(2):
-            self.engines.append(UCI(engines[i]))
-            self.engines[i].uci()
-            for name in Options[i]:
-                if name not in self.engines[i].options:
-                    print('warning: "{0}" is not a valid UCI Option for engine "{1}"'
-                        .format(name, self.engines[i].name))
-            self.engines[i].setoptions(Options[i])
-            if Chess960:
-                self.engines[i].setoptions({'UCI_Chess960': True})
-            self.engines[i].isready()
+def play_move(engine, clocks, turnIdx, whiteIdx):
+    def to_msec(seconds):
+        return int(seconds * 1000) if seconds is not None else None
 
-    def play_move(self, turnIdx, whiteIdx):
-        def to_msec(seconds):
-            return int(seconds * 1000) if seconds is not None else None
+    startTime = time.time()
 
-        startTime = time.time()
+    bestmove, score = engine.go({
+        'depth': clocks[turnIdx].timeControl['depth'],
+        'nodes': clocks[turnIdx].timeControl['nodes'],
+        'movetime': clocks[turnIdx].timeControl['movetime'],
+        'wtime': to_msec(clocks[whiteIdx].time),
+        'btime': to_msec(clocks[whiteIdx ^ 1].time),
+        'winc': to_msec(clocks[whiteIdx].timeControl['inc']),
+        'binc': to_msec(clocks[whiteIdx ^ 1].timeControl['inc']),
+        'movestogo': clocks[turnIdx].movestogo
+    })
 
-        bestmove, score = self.engines[turnIdx].go({
-            'depth': self.clocks[turnIdx].timeControl['depth'],
-            'nodes': self.clocks[turnIdx].timeControl['nodes'],
-            'movetime': self.clocks[turnIdx].timeControl['movetime'],
-            'wtime': to_msec(self.clocks[whiteIdx].time),
-            'btime': to_msec(self.clocks[whiteIdx ^ 1].time),
-            'winc': to_msec(self.clocks[whiteIdx].timeControl['inc']),
-            'binc': to_msec(self.clocks[whiteIdx ^ 1].timeControl['inc']),
-            'movestogo': self.clocks[turnIdx].movestogo
-        })
+    elapsed = time.time() - startTime
+    clocks[turnIdx].consume(elapsed)
 
-        elapsed = time.time() - startTime
-        self.clocks[turnIdx].consume(elapsed)
+    return bestmove, score
 
-        return bestmove, score
 
-    def play_game(self, fen, whiteIdx, timeControls, returnPgn=False, pgnRound=None):
-        board = chess.Board(fen, Chess960)
-        turnIdx = whiteIdx ^ (board.turn == chess.BLACK)
-        self.clocks = [Clock(timeControls[0]), Clock(timeControls[1])]
-        for e in self.engines:
-            e.newgame()
+def play_game(engines, fen, whiteIdx, timeControls, returnPgn=False, pgnRound=None):
+    board = chess.Board(fen, Chess960)
+    turnIdx = whiteIdx ^ (board.turn == chess.BLACK)
+    clocks = [Clock(timeControls[0]), Clock(timeControls[1])]
 
-        drawPlyCnt, resignPlyCnt = 0, 0
-        lostOnTime = None
-        posCmd = ['position fen', fen]
+    for e in engines:
+        e.newgame()
 
-        while (not board.is_game_over(True)):
-            self.engines[turnIdx].writeline(' '.join(posCmd))
-            self.engines[turnIdx].isready()
+    drawPlyCnt, resignPlyCnt = 0, 0
+    lostOnTime = None
+    posCmd = ['position fen', fen]
 
-            try:
-                bestmove, score = self.play_move(turnIdx, whiteIdx)
-            except TimeoutError:
-                lostOnTime = turnIdx
-                break
+    while (not board.is_game_over(True)):
+        engines[turnIdx].writeline(' '.join(posCmd))
+        engines[turnIdx].isready()
 
-            if score is not None:
-                # Resign adjudication
-                if abs(score) >= Resign['score']:
-                    resignPlyCnt += 1
-                    if resignPlyCnt >= 2 * Resign['movecount']:
-                        break
-                else:
-                    resignPlyCnt = 0
+        try:
+            bestmove, score = play_move(engines[turnIdx], clocks, turnIdx, whiteIdx)
+        except TimeoutError:
+            lostOnTime = turnIdx
+            break
 
-                # Draw adjudication
-                if abs(score) <= Draw['score']:
-                    drawPlyCnt += 1
-                    if drawPlyCnt >= 2 * Draw['movecount'] \
-                            and board.fullmove_number >= Draw['movenumber']:
-                        break
-                else:
-                    drawPlyCnt = 0
+        if score is not None:
+            # Resign adjudication
+            if abs(score) >= Resign['score']:
+                resignPlyCnt += 1
+                if resignPlyCnt >= 2 * Resign['movecount']:
+                    break
             else:
-                # Disable adjudication over mate scores
-                drawPlyCnt, resignPlyCnt = 0, 0
+                resignPlyCnt = 0
 
-            if board.move_stack:
-                posCmd.append(bestmove)
+            # Draw adjudication
+            if abs(score) <= Draw['score']:
+                drawPlyCnt += 1
+                if drawPlyCnt >= 2 * Draw['movecount'] \
+                        and board.fullmove_number >= Draw['movenumber']:
+                    break
             else:
-                posCmd += ['moves', bestmove]
-
-            board.push_uci(bestmove)
-            turnIdx ^= 1
-
-        result, reason = board.result(True), 'chess rules'
-        if result == '*':
-            if lostOnTime is not None:
-                result = '1-0' if lostOnTime == whiteIdx else '0-1'
-                reason = 'lost on time'
-            elif resignPlyCnt >= 2 * Resign['movecount']:
-                reason = 'adjudication'
-                if score > 0:
-                    result = '1-0' if board.turn == chess.WHITE else '0-1'
-                else:
-                    result = '0-1' if board.turn == chess.WHITE else '1-0'
-            else:
-                result = '1/2-1/2'
-                reason = 'adjudication'
-
-        if returnPgn:
-            game = chess.pgn.Game.from_board(board)
-            game.headers['White'] = self.engines[whiteIdx].name
-            game.headers['Black'] = self.engines[whiteIdx ^ 1].name
-            game.headers['Result'] = result
-            game.headers['Date'] = datetime.date.today().isoformat()
-            game.headers['Round'] = pgnRound
-            exporter = chess.pgn.StringExporter(variations=False, comments=False)
-            pgnText = game.accept(exporter)
+                drawPlyCnt = 0
         else:
-            pgnText = None
+            # Disable adjudication over mate scores
+            drawPlyCnt, resignPlyCnt = 0, 0
 
-        # Return numeric score, from engine #0 perspective
-        scoreWhite = 1.0 if result == '1-0' else (0 if result == '0-1' else 0.5)
-        return result, scoreWhite if whiteIdx == 0 else 1 - scoreWhite, pgnText
+        if board.move_stack:
+            posCmd.append(bestmove)
+        else:
+            posCmd += ['moves', bestmove]
+
+        board.push_uci(bestmove)
+        turnIdx ^= 1
+
+    result, reason = board.result(True), 'chess rules'
+    if result == '*':
+        if lostOnTime is not None:
+            result = '1-0' if lostOnTime == whiteIdx else '0-1'
+            reason = 'lost on time'
+        elif resignPlyCnt >= 2 * Resign['movecount']:
+            reason = 'adjudication'
+            if score > 0:
+                result = '1-0' if board.turn == chess.WHITE else '0-1'
+            else:
+                result = '0-1' if board.turn == chess.WHITE else '1-0'
+        else:
+            result = '1/2-1/2'
+            reason = 'adjudication'
+
+    if returnPgn:
+        game = chess.pgn.Game.from_board(board)
+        game.headers['White'] = engines[whiteIdx].name
+        game.headers['Black'] = engines[whiteIdx ^ 1].name
+        game.headers['Result'] = result
+        game.headers['Date'] = datetime.date.today().isoformat()
+        game.headers['Round'] = pgnRound
+        exporter = chess.pgn.StringExporter(variations=False, comments=False)
+        pgnText = game.accept(exporter)
+    else:
+        pgnText = None
+
+    # Return numeric score, from engine #0 perspective
+    scoreWhite = 1.0 if result == '1-0' else (0 if result == '0-1' else 0.5)
+    return result, scoreWhite if whiteIdx == 0 else 1 - scoreWhite, pgnText
 
 
 def print_score(scores):
@@ -321,9 +307,32 @@ def run_pool(fens, timeControls, concurrency, pgnOut):
         print_score(scores)
 
 
+def init_engines():
+    assert len(Engines) == 2
+    engines = []
+
+    for i in range(2):
+        engines.append(UCI(Engines[i]))
+        engines[i].uci()
+
+        for name in Options[i]:
+            if name not in engines[i].options:
+                print('warning: "{0}" is not a valid UCI Option for engine "{1}"'
+                    .format(name, engines[i].name))
+
+        engines[i].setoptions(Options[i])
+
+        if Chess960:
+            engines[i].setoptions({'UCI_Chess960': True})
+
+        engines[i].isready()
+
+    return engines
+
+
 def play_games(jobQueue, resultQueue, pgnOut):
     try:
-        game = Game(Engines)
+        engines = init_engines()
 
         while True:
             # HACK: We can't just test jobQueue.empty(), then run jobQueue.get(). Between
@@ -333,7 +342,7 @@ def play_games(jobQueue, resultQueue, pgnOut):
             if job is None:
                 return
 
-            result, score, pgnText = game.play_game(job.fen, job.white, TimeControls,
+            result, score, pgnText = play_game(engines, job.fen, job.white, TimeControls,
                 pgnOut, job.round)
 
             display = 'Game #{0} ({1} vs. {2}): {3}'.format(
