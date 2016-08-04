@@ -147,13 +147,13 @@ class Clock():
                     self.time += self.timeControl['time']
 
 
-def play_move(engine, clocks, turnIdx, whiteIdx):
+def play_move(uciEngine, clocks, turnIdx, whiteIdx):
     def to_msec(seconds):
         return int(seconds * 1000) if seconds is not None else None
 
     startTime = time.time()
 
-    bestmove, score = engine.go({
+    bestmove, score = uciEngine.go({
         'depth': clocks[turnIdx].timeControl['depth'],
         'nodes': clocks[turnIdx].timeControl['nodes'],
         'movetime': clocks[turnIdx].timeControl['movetime'],
@@ -170,12 +170,12 @@ def play_move(engine, clocks, turnIdx, whiteIdx):
     return bestmove, score
 
 
-def play_game(engines, fen, whiteIdx, timeControls, returnPgn=False, pgnRound=None):
+def play_game(uciEngines, fen, whiteIdx, timeControls, returnPgn=False, pgnRound=None):
     board = chess.Board(fen, Chess960)
     turnIdx = whiteIdx ^ (board.turn == chess.BLACK)
     clocks = [Clock(timeControls[0]), Clock(timeControls[1])]
 
-    for e in engines:
+    for e in uciEngines:
         e.newgame()
 
     drawPlyCnt, resignPlyCnt = 0, 0
@@ -183,11 +183,11 @@ def play_game(engines, fen, whiteIdx, timeControls, returnPgn=False, pgnRound=No
     posCmd = ['position fen', fen]
 
     while (not board.is_game_over(True)):
-        engines[turnIdx].writeline(' '.join(posCmd))
-        engines[turnIdx].isready()
+        uciEngines[turnIdx].writeline(' '.join(posCmd))
+        uciEngines[turnIdx].isready()
 
         try:
-            bestmove, score = play_move(engines[turnIdx], clocks, turnIdx, whiteIdx)
+            bestmove, score = play_move(uciEngines[turnIdx], clocks, turnIdx, whiteIdx)
         except TimeoutError:
             lostOnTime = turnIdx
             break
@@ -238,8 +238,8 @@ def play_game(engines, fen, whiteIdx, timeControls, returnPgn=False, pgnRound=No
 
     if returnPgn:
         game = chess.pgn.Game.from_board(board)
-        game.headers['White'] = engines[whiteIdx].name
-        game.headers['Black'] = engines[whiteIdx ^ 1].name
+        game.headers['White'] = uciEngines[whiteIdx].name
+        game.headers['Black'] = uciEngines[whiteIdx ^ 1].name
         game.headers['Result'] = result
         game.headers['Date'] = datetime.date.today().isoformat()
         game.headers['Round'] = pgnRound
@@ -309,30 +309,30 @@ def run_pool(fens, timeControls, concurrency, pgnOut):
 
 def init_engines():
     assert len(Engines) == 2
-    engines = []
+    uciEngines = []
 
     for i in range(2):
-        engines.append(UCI(Engines[i]))
-        engines[i].uci()
+        uciEngines.append(UCI(Engines[i]))
+        uciEngines[i].uci()
 
         for name in Options[i]:
-            if name not in engines[i].options:
+            if name not in uciEngines[i].options:
                 print('warning: "{0}" is not a valid UCI Option for engine "{1}"'
-                    .format(name, engines[i].name))
+                    .format(name, uciEngines[i].name))
 
-        engines[i].setoptions(Options[i])
+        uciEngines[i].setoptions(Options[i])
 
         if Chess960:
-            engines[i].setoptions({'UCI_Chess960': True})
+            uciEngines[i].setoptions({'UCI_Chess960': True})
 
-        engines[i].isready()
+        uciEngines[i].isready()
 
-    return engines
+    return uciEngines
 
 
 def play_games(jobQueue, resultQueue, pgnOut):
     try:
-        engines = init_engines()
+        uciEngines = init_engines()
 
         while True:
             # HACK: We can't just test jobQueue.empty(), then run jobQueue.get(). Between
@@ -342,7 +342,7 @@ def play_games(jobQueue, resultQueue, pgnOut):
             if job is None:
                 return
 
-            result, score, pgnText = play_game(engines, job.fen, job.white, TimeControls,
+            result, score, pgnText = play_game(uciEngines, job.fen, job.white, TimeControls,
                 pgnOut, job.round)
 
             display = 'Game #{0} ({1} vs. {2}): {3}'.format(
