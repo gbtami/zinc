@@ -13,6 +13,7 @@
 # program. If not, see <http://www.gnu.org/licenses/>.
 
 from __future__ import print_function  # Python 2.7 compatibility
+{'You need Python 2.7+ or Python 3.1+'} # Syntax error in earlier Python version
 
 import collections
 import datetime
@@ -62,12 +63,12 @@ class UCI():
     def readline(self):
         line = self.process.stdout.readline().rstrip()
         if self.debug:
-            print('{0}({1}) > {2}'.format(self.name, self.process.pid, line))
+            print('{}({}) > {}'.format(self.name, self.process.pid, line))
         return line
 
     def writeline(self, string):
         if self.debug:
-            print('{0}({1}) < {2}'.format(self.name, self.process.pid, string))
+            print('{}({}) < {}'.format(self.name, self.process.pid, string))
         self.process.stdin.write(string + '\n')
 
     def uci(self):
@@ -86,7 +87,7 @@ class UCI():
             value = options[name]
             if type(value) is bool:
                 value = str(value).lower()
-            self.writeline('setoption name {0} value {1}'.format(name, value))
+            self.writeline('setoption name {} value {}'.format(name, value))
 
     def isready(self):
         self.writeline('isready')
@@ -259,7 +260,7 @@ def print_score(scores):
         mean = sum(scores) / N
         variance = sum((x - mean)**2 for x in scores) / (N - 1)
         margin = 1.96 * math.sqrt(variance / N)
-        print('score of {0} vs. {1} = {2:.2f}% +/- {3:.2f}%'.format(
+        print('score of {} vs. {} = {:.2f}% +/- {:.2f}%'.format(
             Engines[0]['name'], Engines[1]['name'], 100*mean, 100*margin))
 
 
@@ -317,7 +318,7 @@ def init_engines():
 
         for name in Options[i]:
             if name not in uciEngines[i].options:
-                print('warning: "{0}" is not a valid UCI Option for engine "{1}"'
+                print('warning: "{}" is not a valid UCI Option for engine "{}"'
                     .format(name, uciEngines[i].name))
 
         uciEngines[i].setoptions(Options[i])
@@ -345,7 +346,7 @@ def play_games(jobQueue, resultQueue, pgnOut):
             result, score, pgnText = play_game(uciEngines, job.fen, job.white, TimeControls,
                 pgnOut, job.round)
 
-            display = 'Game #{0} ({1} vs. {2}): {3}'.format(
+            display = 'Game #{} ({} vs. {}): {}'.format(
                 job.round, Engines[job.white]['name'],
                 Engines[job.white ^ 1]['name'], result)
 
