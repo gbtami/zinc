@@ -53,7 +53,7 @@ Concurrency = 7
 RatingInterval = 10
 
 
-class UCI():
+class UCIEngine():
     def __init__(self, engine):
         self.process = subprocess.Popen(engine['file'], stdout=subprocess.PIPE,
             stdin=subprocess.PIPE, universal_newlines=True, bufsize=1)
@@ -272,6 +272,7 @@ def run_pool(engines, fens, timeControls, concurrency, pgnOut):
 
     # Prepare the processes
     processes = []
+    assert len(engines) == 2  # Tournaments should be managed by the caller
     for i in range(concurrency):
         process = multiprocessing.Process(target=play_games,
             args=(engines, jobQueue, resultQueue, pgnOut))
@@ -309,32 +310,30 @@ def run_pool(engines, fens, timeControls, concurrency, pgnOut):
         print_score(engines, scores)
 
 
-def init_engines(engines):
-    assert len(engines) == 2
-    uciEngines = []
+def init_engine(engine, options):
+    uciEngine = UCIEngine(engine)
+    uciEngine.uci()
 
-    for i in range(2):
-        uciEngines.append(UCI(engines[i]))
-        uciEngines[i].uci()
+    for name in options:
+        if name not in uciEngine.options:
+            print('warning: "{}" is not a valid UCI Option for engine "{}"'
+                .format(name, uciEngine.name))
 
-        for name in Options[i]:
-            if name not in uciEngines[i].options:
-                print('warning: "{}" is not a valid UCI Option for engine "{}"'
-                    .format(name, uciEngines[i].name))
+    uciEngine.setoptions(options)
 
-        uciEngines[i].setoptions(Options[i])
+    if Chess960:
+        uciEngine.setoptions({'UCI_Chess960': True})
 
-        if Chess960:
-            uciEngines[i].setoptions({'UCI_Chess960': True})
+    uciEngine.isready()
 
-        uciEngines[i].isready()
-
-    return uciEngines
+    return uciEngine
 
 
 def play_games(engines, jobQueue, resultQueue, pgnOut):
     try:
-        uciEngines = init_engines(engines)
+        uciEngines = []
+        for i, e in enumerate(engines):
+            uciEngines.append(init_engine(e, Options[i]))
 
         while True:
             # HACK: We can't just test jobQueue.empty(), then run jobQueue.get(). Between
