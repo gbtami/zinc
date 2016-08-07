@@ -28,6 +28,7 @@ import chess.pgn
 
 # Parameters
 Engines = [
+    {'file': '../Stockfish/master', 'name': 'master', 'debug': False},
     {'file': '../Stockfish/test', 'name': 'test', 'debug': False},
     {'file': '../Stockfish/base', 'name': 'base', 'debug': False}
 ]
@@ -47,7 +48,7 @@ Openings = '../chess960.epd'
 BookDepth = None
 PgnOut = None
 Chess960 = True
-Games = 20
+Games = 10
 Concurrency = 7
 RatingInterval = 10
 
@@ -254,17 +255,17 @@ def play_game(uciEngines, fen, whiteIdx, timeControls, returnPgn=False, pgnRound
     return result, scoreWhite if whiteIdx == 0 else 1 - scoreWhite, pgnText
 
 
-def print_score(scores):
+def print_score(engines, scores):
     N = len(scores)
     if N >= 2:
         mean = sum(scores) / N
         variance = sum((x - mean)**2 for x in scores) / (N - 1)
         margin = 1.96 * math.sqrt(variance / N)
         print('score of {} vs. {} = {:.2f}% +/- {:.2f}%'.format(
-            Engines[0]['name'], Engines[1]['name'], 100*mean, 100*margin))
+            engines[0]['name'], engines[1]['name'], 100*mean, 100*margin))
 
 
-def run_pool(fens, timeControls, concurrency, pgnOut):
+def run_pool(engines, fens, timeControls, concurrency, pgnOut):
     # I/O objects for the process pool
     jobQueue = multiprocessing.Queue()
     resultQueue = multiprocessing.Queue()
@@ -273,7 +274,7 @@ def run_pool(fens, timeControls, concurrency, pgnOut):
     processes = []
     for i in range(concurrency):
         process = multiprocessing.Process(target=play_games,
-            args=(jobQueue, resultQueue, pgnOut))
+            args=(engines, jobQueue, resultQueue, pgnOut))
         processes.append(process)
 
     # Prepare the jobQueue
@@ -295,7 +296,7 @@ def run_pool(fens, timeControls, concurrency, pgnOut):
 
             scores.append(r.score)
             if (i+1) % RatingInterval == 0:
-                print_score(scores)
+                print_score(engines, scores)
 
             if pgnOut:
                 with open(pgnOut, 'a') as f:
@@ -305,15 +306,15 @@ def run_pool(fens, timeControls, concurrency, pgnOut):
             p.join()
 
     except KeyboardInterrupt:
-        print_score(scores)
+        print_score(engines, scores)
 
 
-def init_engines():
-    assert len(Engines) == 2
+def init_engines(engines):
+    assert len(engines) == 2
     uciEngines = []
 
     for i in range(2):
-        uciEngines.append(UCI(Engines[i]))
+        uciEngines.append(UCI(engines[i]))
         uciEngines[i].uci()
 
         for name in Options[i]:
@@ -331,9 +332,9 @@ def init_engines():
     return uciEngines
 
 
-def play_games(jobQueue, resultQueue, pgnOut):
+def play_games(engines, jobQueue, resultQueue, pgnOut):
     try:
-        uciEngines = init_engines()
+        uciEngines = init_engines(engines)
 
         while True:
             # HACK: We can't just test jobQueue.empty(), then run jobQueue.get(). Between
@@ -347,8 +348,8 @@ def play_games(jobQueue, resultQueue, pgnOut):
                 pgnOut, job.round)
 
             display = 'Game #{} ({} vs. {}): {}'.format(
-                job.round, Engines[job.white]['name'],
-                Engines[job.white ^ 1]['name'], result)
+                job.round, engines[job.white]['name'],
+                engines[job.white ^ 1]['name'], result)
 
             resultQueue.put(Result(score=score, display=display, pgnText=pgnText))
 
@@ -382,4 +383,6 @@ if __name__ == '__main__':
                 if i + 1 < Games:
                     fens.append(fen)
 
-    run_pool(fens, TimeControls, Concurrency, PgnOut)
+    # Gauntlet tournament
+    for e in Engines[1:]:
+        run_pool([Engines[0], e], fens, TimeControls, Concurrency, PgnOut)
