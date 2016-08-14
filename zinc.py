@@ -46,11 +46,12 @@ Draw = {'movenumber': 40, 'movecount': 8, 'score': 20}
 Resign = {'movecount': 3, 'score': 500}
 Openings = '../chess960.epd'
 BookDepth = None
-PgnOut = None
+PgnOut = './out.pgn'
 Chess960 = True
 Games = 10
 Concurrency = 7
 RatingInterval = 10
+Tournament = 'round-robin'  # 'gauntlet'
 
 
 class UCIEngine():
@@ -382,6 +383,13 @@ if __name__ == '__main__':
                 if i + 1 < Games:
                     fens.append(fen)
 
-    # Gauntlet tournament
-    for e in Engines[1:]:
-        run_pool([Engines[0], e], fens, TimeControls, Concurrency, PgnOut)
+    # Run the tournament
+    assert len(Engines) >= 2
+    if Tournament == 'gauntlet':
+        for e in Engines[1:]:
+            run_pool([Engines[0], e], fens, TimeControls, Concurrency, PgnOut)
+    else:
+        assert Tournament == 'round-robin'
+        for i in range(len(Engines) - 1):
+            for e in Engines[i+1:]:
+                run_pool([Engines[i], e], fens, TimeControls, Concurrency, PgnOut)
