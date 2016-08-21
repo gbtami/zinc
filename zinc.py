@@ -13,7 +13,7 @@
 # program. If not, see <http://www.gnu.org/licenses/>.
 
 from __future__ import print_function  # Python 2.7 compatibility
-{'You need Python 2.7+ or Python 3.1+'} # Syntax error in earlier Python version
+{'You need Python 2.7+ or Python 3.1+'}  # Syntax error in earlier Python version
 
 import collections
 import datetime
@@ -25,6 +25,7 @@ import time
 import chess
 import chess.polyglot
 import chess.pgn
+import chess.syzygy
 
 # Parameters
 Engines = [
@@ -52,6 +53,7 @@ Games = 10
 Concurrency = 7
 RatingInterval = 10
 Tournament = 'round-robin'  # 'gauntlet'
+SyzygyPath = '../syzygy'  # None
 
 
 class UCIEngine():
@@ -173,7 +175,8 @@ def play_move(uciEngine, clocks, turnIdx, whiteIdx):
     return bestmove, score
 
 
-def play_game(uciEngines, fen, whiteIdx, timeControls, returnPgn=False, pgnRound=None):
+def play_game(uciEngines, fen, whiteIdx, timeControls, tablebases, returnPgn=False,
+        pgnRound=None):
     board = chess.Board(fen, Chess960)
     turnIdx = whiteIdx ^ (board.turn == chess.BLACK)
     clocks = [Clock(timeControls[0]), Clock(timeControls[1])]
@@ -182,12 +185,17 @@ def play_game(uciEngines, fen, whiteIdx, timeControls, returnPgn=False, pgnRound
         e.newgame()
 
     drawPlyCnt, resignPlyCnt = 0, 0
-    lostOnTime = None
+    lostOnTime, wdl = None, None
     posCmd = ['position fen', fen]
 
     while (not board.is_game_over(True)):
         uciEngines[turnIdx].writeline(' '.join(posCmd))
         uciEngines[turnIdx].isready()
+
+        if board.halfmove_clock == 0:
+            wdl = tablebases.probe_wdl(board)
+            if wdl is not None:
+                break
 
         try:
             bestmove, score = play_move(uciEngines[turnIdx], clocks, turnIdx, whiteIdx)
@@ -230,14 +238,22 @@ def play_game(uciEngines, fen, whiteIdx, timeControls, returnPgn=False, pgnRound
             result = '1-0' if lostOnTime == whiteIdx else '0-1'
             reason = 'lost on time'
         elif resignPlyCnt >= 2 * Resign['movecount']:
-            reason = 'adjudication'
+            reason = 'resign'
             if score > 0:
                 result = '1-0' if board.turn == chess.WHITE else '0-1'
             else:
                 result = '0-1' if board.turn == chess.WHITE else '1-0'
+        elif wdl is not None:
+            reason = 'tb adjudication'
+            if wdl == -2:
+                result = '1-0' if board.turn == chess.WHITE else '0-1'
+            elif wdl == 2:
+                result = '0-1' if board.turn == chess.WHITE else '1-0'
+            else:
+                result = '1/2-1/2'
         else:
             result = '1/2-1/2'
-            reason = 'adjudication'
+            reason = 'draw adjudication'
 
     if returnPgn:
         game = chess.pgn.Game.from_board(board)
@@ -246,8 +262,10 @@ def play_game(uciEngines, fen, whiteIdx, timeControls, returnPgn=False, pgnRound
         game.headers['Result'] = result
         game.headers['Date'] = datetime.date.today().isoformat()
         game.headers['Round'] = pgnRound
+        game.headers['FEN'] = fen
         exporter = chess.pgn.StringExporter(variations=False, comments=False)
         pgnText = game.accept(exporter)
+        pgnText += '\n{{{}}}'.format(reason)
     else:
         pgnText = None
 
@@ -266,7 +284,7 @@ def print_score(engines, scores):
             engines[0]['name'], engines[1]['name'], 100*mean, 100*margin))
 
 
-def run_pool(engines, fens, timeControls, concurrency, pgnOut):
+def run_pool(engines, fens, tablebases, timeControls, concurrency, pgnOut):
     # I/O objects for the process pool
     jobQueue = multiprocessing.Queue()
     resultQueue = multiprocessing.Queue()
@@ -276,7 +294,7 @@ def run_pool(engines, fens, timeControls, concurrency, pgnOut):
     assert len(engines) == 2  # Tournaments should be managed by the caller
     for i in range(concurrency):
         process = multiprocessing.Process(target=play_games,
-            args=(engines, jobQueue, resultQueue, pgnOut))
+            args=(engines, jobQueue, resultQueue, tablebases, pgnOut))
         processes.append(process)
 
     # Prepare the jobQueue
@@ -330,7 +348,7 @@ def init_engine(engine, options):
     return uciEngine
 
 
-def play_games(engines, jobQueue, resultQueue, pgnOut):
+def play_games(engines, jobQueue, resultQueue, tablebases, pgnOut):
     try:
         uciEngines = []
         for i, e in enumerate(engines):
@@ -344,8 +362,8 @@ def play_games(engines, jobQueue, resultQueue, pgnOut):
             if job is None:
                 return
 
-            result, score, pgnText = play_game(uciEngines, job.fen, job.white, TimeControls,
-                pgnOut, job.round)
+            result, score, pgnText = play_game(uciEngines, job.fen, job.white,
+                TimeControls, tablebases, pgnOut, job.round)
 
             display = 'Game #{} ({} vs. {}): {}'.format(
                 job.round, engines[job.white]['name'],
@@ -383,13 +401,16 @@ if __name__ == '__main__':
                 if i + 1 < Games:
                     fens.append(fen)
 
-    # Run the tournament
-    assert len(Engines) >= 2
-    if Tournament == 'gauntlet':
-        for e in Engines[1:]:
-            run_pool([Engines[0], e], fens, TimeControls, Concurrency, PgnOut)
-    else:
-        assert Tournament == 'round-robin'
-        for i in range(len(Engines) - 1):
-            for e in Engines[i+1:]:
-                run_pool([Engines[i], e], fens, TimeControls, Concurrency, PgnOut)
+    with chess.syzygy.open_tablebases(SyzygyPath) as tablebases:
+        # Run the tournament
+        assert len(Engines) >= 2
+        if Tournament == 'gauntlet':
+            for e in Engines[1:]:
+                run_pool([Engines[0], e], fens, tablebases, TimeControls, Concurrency,
+                    PgnOut)
+        else:
+            assert Tournament == 'round-robin'
+            for i in range(len(Engines) - 1):
+                for e in Engines[i+1:]:
+                    run_pool([Engines[i], e], fens, tablebases, TimeControls, Concurrency,
+                        PgnOut)
