@@ -213,7 +213,7 @@ def play_game(uciEngines, fen, whiteIdx, timeControls, tablebases, returnPgn=Fal
                 resignPlyCnt = 0
 
             # Draw adjudication
-            if abs(score) <= Draw['score']:
+            if abs(score) <= Draw['score'] and board.halfmove_clock > 0:
                 drawPlyCnt += 1
                 if drawPlyCnt >= 2 * Draw['movecount'] \
                         and board.fullmove_number >= Draw['movenumber']:
