@@ -29,13 +29,12 @@ import chess.syzygy
 
 # Parameters
 Engines = [
-    {'file': '../Stockfish/master', 'name': 'master', 'debug': False},
-    {'file': '../Stockfish/test', 'name': 'test', 'debug': False},
-    {'file': '../Stockfish/base', 'name': 'base', 'debug': False}
+    {'file': '../Demolito/master', 'name': 'demolito', 'debug': False},
+    {'file': '../Demolito/master', 'name': 'demolito', 'debug': False},
 ]
 Options = [
-    {'Hash': 16, 'Threads': 1},
-    {'Hash': 16, 'Threads': 1}
+    {'Hash': 4, 'Threads': 1},
+    {'Hash': 4, 'Threads': 1}
 ]
 TimeControls = [
     {'depth': None, 'nodes': None, 'movetime': None, 'time': 2, 'inc': 0.02,
@@ -44,12 +43,12 @@ TimeControls = [
         'movestogo': None}
 ]
 Draw = {'movenumber': 40, 'movecount': 8, 'score': 20}
-Resign = {'movecount': 3, 'score': 500}
-Openings = '../chess960.epd'
+Resign = {'movecount': 3, 'score': 700}
+Openings = '../bookgen/chess960.2.epd'
 BookDepth = None
 PgnOut = './out.pgn'
 Chess960 = True
-Games = 10
+Games = 64000
 Concurrency = 7
 RatingInterval = 10
 Tournament = 'round-robin'  # 'gauntlet'
@@ -188,7 +187,11 @@ def play_game(uciEngines, fen, whiteIdx, timeControls, tablebases, returnPgn=Fal
     lostOnTime, wdl = None, None
     posCmd = ['position fen', fen]
 
+    dump = []
+
     while (not board.is_game_over(True)):
+        dump.append([board.shredder_fen(), board.turn])
+
         uciEngines[turnIdx].writeline(' '.join(posCmd))
         uciEngines[turnIdx].isready()
 
@@ -255,6 +258,8 @@ def play_game(uciEngines, fen, whiteIdx, timeControls, tablebases, returnPgn=Fal
             result = '1/2-1/2'
             reason = 'draw adjudication'
 
+    scoreWhite = 1.0 if result == '1-0' else (0 if result == '0-1' else 0.5)
+
     if returnPgn:
         game = chess.pgn.Game.from_board(board)
         game.headers['White'] = uciEngines[whiteIdx].name
@@ -264,13 +269,14 @@ def play_game(uciEngines, fen, whiteIdx, timeControls, tablebases, returnPgn=Fal
         game.headers['Round'] = pgnRound
         game.headers['FEN'] = fen
         exporter = chess.pgn.StringExporter(variations=False, comments=False)
-        pgnText = game.accept(exporter)
-        pgnText += '\n{{{}}}'.format(reason)
+
+        pgnText = ''
+        for d in dump:
+            pgnText += '{},{}\n'.format(d[0], scoreWhite if d[1] == chess.WHITE else 1.0 - scoreWhite)
     else:
         pgnText = None
 
     # Return numeric score, from engine #0 perspective
-    scoreWhite = 1.0 if result == '1-0' else (0 if result == '0-1' else 0.5)
     return result, scoreWhite if whiteIdx == 0 else 1 - scoreWhite, pgnText
 
 
@@ -320,7 +326,7 @@ def run_pool(engines, fens, tablebases, timeControls, concurrency, pgnOut):
 
             if pgnOut:
                 with open(pgnOut, 'a') as f:
-                    print(r.pgnText, file=f, end='\n\n')
+                    print(r.pgnText, file=f)
 
         for p in processes:
             p.join()
